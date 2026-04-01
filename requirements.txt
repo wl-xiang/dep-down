@@ -1,0 +1,5 @@
+jinja2
+mssql
+pyodbc
+numpy
+python-docx

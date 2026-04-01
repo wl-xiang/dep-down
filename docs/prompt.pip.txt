@@ -1,0 +1,36 @@
+# 任务
+我的需求是封装一个工具或者脚本（python或shell），需求来源是因为我经常需要在win或linux的外网设备上为内网的win或者linux（x86_64或者arm64架构），通过pip download命令实现跨平台跨python版本下载whl包，例如下面的模版命令
+
+pip download \
+  --only-binary=:all: \
+  --platform manylinux_2_17_x86_64 \
+  --python-version 310 \
+  -d ./wheels \
+  -r requirements.txt
+
+  但是每次输入这一大串命令很不方便，我希望你帮我封装成脚本），每次可以减少输入参数的数量，又能达到一样的效果
+
+# 要求
+	- 需要下载二进制包
+	- 做好参数映射：平台、python版本、abi版本
+	- 参数基本和pip download一致
+
+# 初步设计
+## 参数设计
+--platform -p: [linux, win] # 可以传入多个platform。其中linux对应的是manylinux_2_17，不是其他的，也无需映射其他的linux
+--arch -a:[x86_64, amd64, arm64, aarch64]  # x86_64和amd64作用应该是一致的.注意跟platform的组合，固定搭配是manylinux_2_17是x86_64，win是amd64，注意自适应搭配
+--python-verison -v: [36, 38, 39, 310, 311, 312, 313, ...] # 需要自动识别
+-d: 同pip download的-d选项, 若不提供，默认为./wheels
+-r: [auto, requirements.txt, ...] # auto和requirements.txt效果一致，也可以指定为其他文件
+--index-url --index -i: 同pip download, 可以指定pip_mirror
+
+隐藏参数（一定会带着的）：
+--only-binary=:all:
+
+我会给你一份platforms.md平台标签对照表，确保参数写脚本的时候平台参数无误
+
+脚本里面会给每个参数提供默认值，例如platform是linux, arch是x86_64, python-verison是312, d是./wheels, r是requirements.txt可以加一个.env文件，脚本可以读取.env的值来覆盖参数的值（如果env提供了值）.所以参数取值的优先级是：脚本默认值 < .env提供的值 < 脚本参数传递的值
+
+脚本名字是pip_download，你需要先实现.py（你可以使用click库处理参数），再写.sh，最后写.ps1
+每一种脚本测试通过之后，并且我手动确认了，再写下一个
+

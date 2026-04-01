@@ -1,0 +1,9 @@
+{
+  "name": "my-offline-project",
+  "version": "1.0.0",
+  "dependencies": {
+{%- for pkg in packages %}
+    "{{ pkg }}": "*"{% if not loop.last %},{% endif %}
+{%- endfor %}
+  }
+}
