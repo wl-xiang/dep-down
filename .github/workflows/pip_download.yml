@@ -18,9 +18,7 @@ on:
         default: 'x86_64'
         options:
           - 'x86_64'
-          - 'amd64'
           - 'arm64'
-          - 'aarch64'
       python_version:
         description: 'Target Python version'
         type: choice
@@ -53,7 +51,7 @@ on:
         required: false
         default: ''
       requirements:
-        description: 'Content of requirements.txt (multi-line). Leave empty to use the requirements.txt in the repo.'
+        description: 'Content of requirements.txt. Use $ to represent a newline (e.g. requests!=2.0.0$fastapi$oracledb). Leave empty to use the requirements.txt in the repo.'
         type: string
         required: false
         default: ''
@@ -112,7 +110,7 @@ jobs:
           REQUIREMENTS: ${{ inputs.requirements }}
         run: |
           set -euo pipefail
-          printf '%s\n' "$REQUIREMENTS" > requirements.txt
+          printf '%s\n' "$(printf '%s' "$REQUIREMENTS" | sed 's/\$/\n/g')" > requirements.txt
           if ! grep -qE '[^[:space:]]' requirements.txt; then
             echo '::error::The requirements input contains only whitespace.'
             exit 1
