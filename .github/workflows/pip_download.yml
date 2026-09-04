@@ -1,0 +1,169 @@
+name: Pip Download
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Target platform'
+        type: choice
+        required: true
+        default: 'linux'
+        options:
+          - 'linux'
+          - 'win'
+      arch:
+        description: 'Target architecture'
+        type: choice
+        required: true
+        default: 'x86_64'
+        options:
+          - 'x86_64'
+          - 'amd64'
+          - 'arm64'
+          - 'aarch64'
+      python_version:
+        description: 'Target Python version'
+        type: choice
+        required: true
+        default: '3.10'
+        options:
+          - '3.6'
+          - '3.7'
+          - '3.8'
+          - '3.9'
+          - '3.10'
+          - '3.11'
+          - '3.12'
+          - '3.13'
+          - '3.14'
+      pip_mirror:
+        description: 'Pip index mirror'
+        type: choice
+        required: true
+        default: 'THU (tuna)'
+        options:
+          - 'THU (tuna)'
+          - 'Aliyun'
+          - 'USTC'
+          - 'Official (pypi.org)'
+          - 'Other (custom URL)'
+      custom_mirror_url:
+        description: 'Custom pip index URL (used only when pip_mirror is "Other (custom URL)")'
+        type: string
+        required: false
+        default: ''
+      requirements:
+        description: 'Content of requirements.txt (multi-line). Leave empty to use the requirements.txt in the repo.'
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  pip-download:
+    name: Download wheels
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install click
+
+      - name: Resolve pip mirror URL
+        id: mirror
+        env:
+          PIP_MIRROR: ${{ inputs.pip_mirror }}
+          CUSTOM_MIRROR_URL: ${{ inputs.custom_mirror_url }}
+        run: |
+          set -euo pipefail
+          case "$PIP_MIRROR" in
+            'THU (tuna)')          url='https://pypi.tuna.tsinghua.edu.cn/simple' ;;
+            'Aliyun')              url='https://mirrors.aliyun.com/pypi/simple' ;;
+            'USTC')                url='https://pypi.mirrors.ustc.edu.cn/simple' ;;
+            'Official (pypi.org)') url='https://pypi.org/simple' ;;
+            'Other (custom URL)')
+              url="$(printf '%s' "$CUSTOM_MIRROR_URL" | tr -d '[:space:]')"
+              if [ -z "$url" ]; then
+                echo '::error::pip_mirror is "Other (custom URL)" but custom_mirror_url is empty.'
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::Unknown pip_mirror value: $PIP_MIRROR"
+              exit 1
+              ;;
+          esac
+          echo "Using pip index: $url"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Write requirements.txt from input
+        if: ${{ inputs.requirements != '' }}
+        env:
+          REQUIREMENTS: ${{ inputs.requirements }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$REQUIREMENTS" > requirements.txt
+          if ! grep -qE '[^[:space:]]' requirements.txt; then
+            echo '::error::The requirements input contains only whitespace.'
+            exit 1
+          fi
+          echo '--- requirements.txt (from input) ---'
+          cat requirements.txt
+
+      - name: Download wheels
+        env:
+          PLATFORM: ${{ inputs.platform }}
+          ARCH: ${{ inputs.arch }}
+          PYTHON_VERSION: ${{ inputs.python_version }}
+          INDEX_URL: ${{ steps.mirror.outputs.url }}
+        run: |
+          set -euo pipefail
+          python pip_download.py \
+            -p "$PLATFORM" \
+            -a "$ARCH" \
+            -v "$PYTHON_VERSION" \
+            -r requirements.txt \
+            -i "$INDEX_URL" \
+            --need-pack 2>&1 | tee download.log
+          # pip_download.py swallows pip failures and exits 0, so scan the log.
+          # Strip ANSI colors first so anchored patterns keep matching.
+          sed 's/\x1b\[[0-9;]*m//g' download.log > download.clean.log
+          if grep -nE '^ERROR|^Error:|失败' download.clean.log; then
+            echo '::error::pip download reported errors (see matching lines above).'
+            exit 1
+          fi
+
+      - name: Verify wheels
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          whls=(wheels/*.whl)
+          if [ ${#whls[@]} -eq 0 ]; then
+            echo '::error::No *.whl files found in wheels/.'
+            exit 1
+          fi
+          echo "Downloaded ${#whls[@]} wheel file(s):"
+          ls -1 wheels/
+          first_line="$(head -n 1 wheels/requirements.txt)"
+          if [ "$first_line" != '--no-index --find-links=./' ]; then
+            echo "::error::Unexpected first line in wheels/requirements.txt: '$first_line'"
+            exit 1
+          fi
+          echo "wheels/requirements.txt first line OK: $first_line"
+
+      - name: Upload wheels artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels_${{ inputs.platform }}_${{ inputs.arch }}_py${{ inputs.python_version }}
+          path: wheels
+          if-no-files-found: error
