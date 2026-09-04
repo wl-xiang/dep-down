@@ -2,6 +2,52 @@
 
 跨平台的 Python 和 npm 离线包下载工具，用于在外网设备上为内网系统下载依赖包。
 
+## 通过 GitHub Action 自动下载并打包
+
+本仓库提供一个人工触发的 GitHub Actions 工作流 `.github/workflows/pip_download.yml`，你无需克隆仓库或安装环境，直接在 GitHub 网站上即可为指定平台/架构/Python 版本下载 pip wheel 包，并打包成可下载的产物（artifact）。
+
+### 使用方法（Fork 后用）
+
+1. **Fork 本仓库** 到你自己的 GitHub 账号（工作流需要以你的身份在 Actions 中运行）。
+2. 进入 Fork 后的仓库，点击顶部 **Actions** 标签。
+3. 在左侧工作流列表中选择 **Pip Download**，点击 **Run workflow**。
+4. 填写触发参数（见下表），点击 **Run workflow** 启动。
+5. 运行完成后打开该次运行，在 **Summary** 底部的 **Artifacts** 区域下载 `wheels_<platform>_<arch>_py<version>.zip` 产物。
+6. 解压产物后，在内网/目标机器上执行 `pip install -r requirements.txt` 即可离线安装全部依赖。
+
+### 触发参数（Inputs）
+
+| 参数 | 必填 | 取值 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `platform` | 是 | `linux` / `win` | `linux` | 目标平台 |
+| `arch` | 是 | `x86_64` / `arm64` | `x86_64` | 目标架构 |
+| `python_version` | 是 | `3.6`–`3.14` | `3.10` | 目标 Python 版本 |
+| `pip_mirror` | 是 | `THU (tuna)` / `Aliyun` / `USTC` / `Official (pypi.org)` / `Other (custom URL)` | `THU (tuna)` | pip 镜像源 |
+| `custom_mirror_url` | 否 | 任意 URL | 空 | 仅当 `pip_mirror` 为 `Other (custom URL)` 时必填 |
+| `requirements` | 否 | 文本 | 空 | requirements.txt 内容；留空则使用仓库内的 `requirements.txt` |
+
+> **提示：`requirements` 输入框无法直接换行**，请使用 `$` 表示换行。例如输入
+> `requests!=2.0.0$fastapi$oracledb` 会被解析为三行：
+> 1. `requests!=2.0.0`
+> 2. `fastapi`
+> 3. `oracledb`
+
+### 产物内容
+
+下载产物 `wheels/` 目录包含所有 `.whl` 文件以及一个 `requirements.txt`，其首行为 `--no-index --find-links=./`，保证离线安装时不会连接网络：
+
+```bash
+pip install -r requirements.txt
+```
+
+### 校验机制
+
+工作流内置以下检查，任一失败都会以错误退出：
+- 解析镜像源：`Other (custom URL)` 但 `custom_mirror_url` 为空，或未知镜像值时报错。
+- `requirements` 输入仅为空白时报错。
+- 扫描 `pip_download.py` 的下载日志，发现 `ERROR` / `Error:` / `失败` 即判定失败。
+- 校验 `wheels/` 下存在 `.whl` 文件，并校验 `wheels/requirements.txt` 首行正确。
+
 ## 功能特性
 
 ### Python 包下载 (pip_download.py)
