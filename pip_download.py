@@ -86,6 +86,9 @@ def main(platform, arch, python_version, d, r, index_url, need_pack, packages):
     target_d = d if d else default_d
     target_r = r if r else default_r
     target_index_url = index_url if index_url else default_index_url
+    if target_index_url:
+        # 去掉手工粘贴时带入的空白、反引号和引号，避免 index-url 被解析为非法地址
+        target_index_url = target_index_url.strip().strip("`").strip("'").strip('"')
 
     target_r = "requirements.txt" if target_r.lower() == "auto" else target_r
 
