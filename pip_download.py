@@ -46,6 +46,11 @@ def get_param_value(env_vars, key, default):
     help="Python版本 [36, 38, 39, 310, 311, 312, 313, ...]",
 )
 @click.option(
+    "--glibc",
+    "-g",
+    help="Linux 目标 glibc 版本 [2.17, 2.28, 2.34], 仅 Linux 生效",
+)
+@click.option(
     "-d",
     help="下载目录, 默认值为 ./wheels",
 )
@@ -65,12 +70,13 @@ def get_param_value(env_vars, key, default):
     default=None,
 )
 @click.argument("packages", nargs=-1)
-def main(platform, arch, python_version, d, r, index_url, need_pack, packages):
+def main(platform, arch, python_version, glibc, d, r, index_url, need_pack, packages):
     env_vars = load_env()
 
     default_platform = get_param_value(env_vars, "PLATFORM", "linux")
     default_arch = get_param_value(env_vars, "ARCH", "x86_64")
     default_python_version = get_param_value(env_vars, "PYTHON_VERSION", "312")
+    default_glibc = get_param_value(env_vars, "GLIBC", "2.17")
     default_d = get_param_value(env_vars, "D", "./wheels")
     default_r = get_param_value(env_vars, "R", "requirements.txt")
     default_index_url = get_param_value(env_vars, "INDEX_URL", None)
@@ -83,6 +89,7 @@ def main(platform, arch, python_version, d, r, index_url, need_pack, packages):
     target_platforms = list(platform) if platform else [default_platform]
     target_arch = arch if arch else default_arch
     target_python_version = python_version if python_version else default_python_version
+    target_glibc = glibc if glibc else default_glibc
     target_d = d if d else default_d
     target_r = r if r else default_r
     target_index_url = index_url if index_url else default_index_url
@@ -94,10 +101,11 @@ def main(platform, arch, python_version, d, r, index_url, need_pack, packages):
 
     for plat in target_platforms:
         if plat == "linux":
+            glibc_tag = target_glibc.replace(".", "_")
             if target_arch in ["x86_64", "amd64"]:
-                pip_platform = "manylinux_2_17_x86_64"
+                pip_platform = f"manylinux_{glibc_tag}_x86_64"
             elif target_arch in ["arm64", "aarch64"]:
-                pip_platform = "manylinux_2_17_aarch64"
+                pip_platform = f"manylinux_{glibc_tag}_aarch64"
             else:
                 click.echo(f"Error: 不支持的架构 {target_arch} 用于平台 {plat}", err=True)
                 return
