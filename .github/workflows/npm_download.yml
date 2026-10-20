@@ -296,7 +296,7 @@ jobs:
             echo "npm install (Get-ChildItem ./packages/*.tgz).FullName --offline"
             echo '```'
             echo ""
-            echo "> If you hit \`npm error class extends value undefined is not a constructor or null\`, that points to a broken or version-mismatched Node.js + npm installation on the offline machine (npm's own bundled modules fail to load), not to these packages — any npm command would fail the same way. Reinstall Node.js and clear stale global npm directories so \`node -v\` and \`npm -v\` are consistent."
+            echo "> If you hit \`npm error class extends value undefined is not a constructor or null\`, npm itself failed to load on the offline machine (the stack stops inside npm's own bundled modules such as fs-minipass/minipass-collect), before it ever touches these tarballs — so every npm command fails the same way. The usual causes are two conflicting Node installs (e.g. nvm-windows vs the installer/winget/Volta) or a leftover global npm directory from an older Node. Check \`node -v\`, \`npm -v\` and \`where npm\` (Windows) / \`which -a npm\` (Linux), remove the extra Node and stale npm dirs, then reinstall Node from the official installer."
             echo ""
             echo "The \`packages/\` folder is also a valid \`package.json\` project, so it can be published to a private registry (\`npo publish\`) or imported into Verdaccio for team-wide offline use — see \`docs/npm-offline-package-guide.md\`."
           } >> "$GITHUB_STEP_SUMMARY"

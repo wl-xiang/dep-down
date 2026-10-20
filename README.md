@@ -277,7 +277,16 @@ npm install --offline
 ```
 4. 如希望直接安装进你自己的项目，则在项目根目录执行 `npm install ./packages/*.tgz --offline`（Windows PowerShell：`npm install (Get-ChildItem ./packages/*.tgz).FullName --offline`）。
 
-> 若遇到 `npm error class extends value undefined is not a constructor or null`，通常说明离线机器上的 Node.js + npm 安装损坏或版本不匹配（npm 自身内置模块加载失败），此时任意 npm 命令都会报同样的错，与下载的包无关。请重装 Node.js 并清理残留的全局 npm 目录，确保 `node -v` 与 `npm -v` 版本匹配。
+> 若遇到 `npm error class extends value undefined is not a constructor or null`：这不是离线包的问题，而是离线机器上 **npm 自身加载失败**——报错堆栈停在 npm 内置模块（如 `fs-minipass`、`minipass-collect` 的 `class extends ... Minipass`）的模块加载阶段，此时还没有碰到任何我们下载的 tarball，所以任何 `npm` 命令都会报同样的错。
+>
+> 常见原因有两个：① 同一台机器装了多套 Node（典型是 nvm-windows 与官方安装包 / winget / Volta 互相冲突）；② 升级 Node 后残留了旧版本的全局 npm 目录（部分升级导致 npm 内部依赖损坏）。
+>
+> 排查与修复：
+> 1. 先确认：`node -v` 正常但 `npm -v` 也报同样的错，即可判定 npm 本身损坏。
+> 2. 确认是否有多套 npm：Windows 执行 `where npm`，Linux/macOS 执行 `which -a npm`，出现多个路径就是冲突。
+> 3. 卸载多余的 Node；删除残留的全局 npm 目录（如 `C:\Program Files\nodejs\node_modules\npm`、`%AppData%\npm`、`/usr/lib/node_modules/npm`、`~/.nvm/versions/node/*/lib/node_modules/npm`）。
+> 4. 用官方安装包重装 Node（离线机需先拷入匹配版本的安装包），并且不要在版本不匹配的 Node 上执行 `npm install -g npm`。
+> 5. 修复后重新验证：`node -v`、`npm -v` 均正常，再执行 `cd packages && npm install --offline`。
 
 ## 项目结构
 
