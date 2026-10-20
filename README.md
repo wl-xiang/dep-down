@@ -78,7 +78,25 @@ pip install -r requirements.txt
 
 产物 `npm_packages` 解压后为顶层 `packages/` 文件夹（不会散落到当前目录），其中包含：
 - 所有依赖的 `.tgz` 离线包（含全部子依赖）；
-- 一个 `package.json`：把每个依赖都声明为本地 tarball（`file:./xxx.tgz`）的离线安装清单，在 `packages/` 内执行 `npm install --offline` 时 npm 只读取磁盘上的 tarball，不访问任何 registry。
+- 一个 `package.json`：把每个依赖都声明为本地 tarball（`file:./xxx.tgz`）的离线安装清单，在 `packages/` 内执行 `npm install --offline` 时 npm 只读取磁盘上的 tarball，不访问任何 registry；
+- 一个 `README.md`：包含包列表、离线安装说明，以及发布到本地 Verdaccio 的命令。
+
+### 发布到本地 Verdaccio
+
+`packages/package.json` 中 `private` 为 `false`，因此可直接发布到私有 registry：
+
+```bash
+cd packages
+npm login --registry http://localhost:4873
+npm publish --registry http://localhost:4873
+```
+
+内网机器随后配置 registry 即可安装：
+
+```bash
+npm config set registry http://<verdaccio-host>:4873
+npm install npm-offline-packages
+```
 
 ### 校验机制
 
@@ -87,7 +105,7 @@ pip install -r requirements.txt
 - `packages` 输入仅为空白时报错。
 - 扫描 `npo_fetch.py` 的下载日志，发现 `ERROR` / `Error:` / `下载失败` 即判定失败。
 - 校验 `packages/` 下存在 `.tgz` 文件，且存在 `packages/package.json`。
-- 基于下载到的全部 `.tgz` 生成 `packages/package.json` 离线安装清单（每个依赖为 `file:./...`），并将产物归档为顶层 `packages/` 文件夹。
+- 基于下载到的全部 `.tgz` 生成 `packages/package.json` 离线安装清单（每个依赖为 `file:./...`）和 `packages/README.md` 使用说明，并将产物归档为顶层 `packages/` 文件夹。
 
 ## 功能特性
 
@@ -299,6 +317,7 @@ npm install --offline
 │   │   └── requirements.txt       # Python 依赖列表
 │   └── npm/                       # npm 相关文件与脚本
 │       ├── .env.npm               # npm 配置
+│       ├── README.template.md     # 产物 packages/README.md 的模板
 │       ├── npm_install.sh         # npm 离线安装脚本
 │       ├── npo_fetch.py           # npm 包下载工具 (Python 版本)
 │       ├── npo_fetch.sh           # npm 包下载工具 (Shell 版本)

@@ -166,7 +166,7 @@ jobs:
             exit 1
           fi
 
-      - name: Generate offline install manifest
+      - name: Generate offline install manifest and README
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -177,6 +177,7 @@ jobs:
           dest = Path("packages")
           tarballs = sorted(dest.glob("*.tgz")) + sorted(dest.glob("*/*.tgz"))
           deps = {}
+          versions = {}
           for tgz in tarballs:
               meta = None
               with tarfile.open(tgz, "r:gz") as tar:
@@ -187,18 +188,34 @@ jobs:
               if not meta or not meta.get("name"):
                   raise SystemExit(f"cannot read a package name from {tgz}")
               deps[meta["name"]] = "file:./" + tgz.relative_to(dest).as_posix()
+              versions[meta["name"]] = meta.get("version", "")
           if not deps:
               raise SystemExit("no *.tgz files found in packages/")
           manifest = {
               "name": "npm-offline-packages",
               "version": "1.0.0",
-              "private": True,
+              "private": False,
               "description": "Offline install manifest: every dependency resolves to a local tarball, so `npm install --offline` never contacts a registry.",
               "dependencies": dict(sorted(deps.items())),
           }
           (dest / "package.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
           print(f"Wrote packages/package.json with {len(deps)} local file: dependencies")
+
+          pkg_list = "\n".join(
+              "- `%s`%s" % (name, "@" + versions[name] if versions[name] else "")
+              for name in sorted(deps)
+          )
+          template = Path("scripts/npm/README.template.md").read_text(encoding="utf-8")
+          readme = template.replace("__TARBALL_COUNT__", str(len(deps))).replace(
+              "__PACKAGE_LIST__", pkg_list
+          )
+          (dest / "README.md").write_text(readme, encoding="utf-8")
+          print("Wrote packages/README.md")
           PY
+          if [ ! -f packages/README.md ]; then
+            echo '::error::packages/README.md is missing.'
+            exit 1
+          fi
 
       - name: Stage artifact as a top-level packages/ folder
         run: |
@@ -298,7 +315,15 @@ jobs:
             echo ""
             echo "> If you hit \`npm error class extends value undefined is not a constructor or null\`, that points to a broken or version-mismatched Node.js + npm installation on the offline machine (npm's own bundled modules fail to load), not to these packages — any npm command would fail the same way. Reinstall Node.js and clear stale global npm directories so \`node -v\` and \`npm -v\` are consistent."
             echo ""
-            echo "The \`packages/\` folder is also a valid \`package.json\` project, so it can be published to a private registry (\`npo publish\`) or imported into Verdaccio for team-wide offline use — see \`docs/npm-offline-package-guide.md\`."
+            echo "The \`packages/\` folder is also a valid \`package.json\` project (\`private\` is \`false\`), so it can be published to a private registry (\`npm publish\`) or imported into Verdaccio for team-wide offline use — see \`docs/npm-offline-package-guide.md\`."
+            echo ""
+            echo "A \`packages/README.md\` is bundled in the artifact with the same offline install guide plus the commands for publishing to a local Verdaccio:"
+            echo ""
+            echo '```bash'
+            echo "cd packages"
+            echo "npm login --registry http://localhost:4873"
+            echo "npm publish --registry http://localhost:4873"
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
           echo 'Workflow summary written to $GITHUB_STEP_SUMMARY'
