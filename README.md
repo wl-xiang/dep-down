@@ -282,7 +282,7 @@ npm install --offline
 > 常见原因有两个：① 同一台机器装了多套 Node（典型是 nvm-windows 与官方安装包 / winget / Volta 互相冲突）；② 升级 Node 后残留了旧版本的全局 npm 目录（部分升级导致 npm 内部依赖损坏）。
 >
 > 排查与修复：
-> 1. 先确认：`node -v` 正常但 `npm -v` 也报同样的错，即可判定 npm 本身损坏。
+> 1. 先隔离：执行 `npm cache verify`（它只用 npm 自身内置模块，完全不涉及我们下载的 tarball）。若它报出同样的错，即可 100% 判定是 **npm 自身损坏**；报错堆栈里的文件路径（如 `.../node_modules/npm/node_modules/fs-minipass/lib/index.js`）会指出到底是哪一份 npm 坏了。注意 `npm -v` 可能因为懒加载而侥幸正常，所以用 `npm cache verify` 更可靠。
 > 2. 确认是否有多套 npm：Windows 执行 `where npm`，Linux/macOS 执行 `which -a npm`，出现多个路径就是冲突。
 > 3. 卸载多余的 Node；删除残留的全局 npm 目录（如 `C:\Program Files\nodejs\node_modules\npm`、`%AppData%\npm`、`/usr/lib/node_modules/npm`、`~/.nvm/versions/node/*/lib/node_modules/npm`）。
 > 4. 用官方安装包重装 Node（离线机需先拷入匹配版本的安装包），并且不要在版本不匹配的 Node 上执行 `npm install -g npm`。
