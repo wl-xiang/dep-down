@@ -7,9 +7,26 @@ import tarfile
 from pathlib import Path
 from jinja2 import Template
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+
+
+def resolve_path(value):
+    """将相对路径按当前工作目录解析；若不存在则回退到脚本所在目录。
+
+    这样无论从仓库根目录还是脚本目录调用，随脚本一起存放的默认文件（如
+    packages.txt / package.json.j2）都能被找到；显式传入且存在的路径保持不变。
+    """
+    p = Path(value)
+    if p.is_absolute() or p.exists():
+        return p
+    fallback = SCRIPT_DIR / p
+    return fallback if fallback.exists() else p
+
 
 def load_env():
     env_file = Path(".env.npm")
+    if not env_file.exists():
+        env_file = SCRIPT_DIR / ".env.npm"
     env_vars = {}
     if env_file.exists():
         with open(env_file, "r", encoding="utf-8") as f:
@@ -95,12 +112,18 @@ def main(registry, destination, package_json, packages_txt, need_pack, packages)
     target_p = package_json if package_json else default_package_json
     target_pt = packages_txt if packages_txt else default_packages_txt
 
+    # 解析输入文件路径：优先当前目录，找不到时回退到脚本目录（随脚本存放）
+    if target_pt and target_pt.strip():
+        target_pt = str(resolve_path(target_pt))
+    if target_p and target_p.strip():
+        target_p = str(resolve_path(target_p))
+
     d_path = Path(target_d)
-    d_path.mkdir(exist_ok=True)
+    d_path.mkdir(parents=True, exist_ok=True)
 
     generated_p = None
     if target_pt and Path(target_pt).exists():
-        template_file = Path("package.json.j2")
+        template_file = resolve_path("package.json.j2")
         if template_file.exists():
             output_p = d_path / "package.json"
             generated_p = generate_package_json_from_pt(target_pt, template_file, output_p)
@@ -115,41 +138,28 @@ def main(registry, destination, package_json, packages_txt, need_pack, packages)
             click.echo("Error: 请指定 package.json、packages.txt 或包名", err=True)
             return
 
-    # 检查 npo 是否可用
-    npo_available = False
-    try:
-        # 尝试直接运行 npo
-        result = subprocess.run(
-            ["npo", "--version"], 
-            capture_output=True, 
-            text=True,
-            shell=os.name == 'nt'  # Windows 上使用 shell
-        )
-        if result.returncode == 0:
-            npo_available = True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        pass
-    
-    # 如果直接运行失败，尝试使用 npx
-    if not npo_available:
+    # 检查 npo 是否可用：优先直接运行 npo，其次回退到 npx
+    npo_cmd = None
+    for candidate in (["npo"], ["npx", "npo"]):
         try:
             result = subprocess.run(
-                ["npx", "npo", "--version"], 
-                capture_output=True, 
+                candidate + ["--version"],
+                capture_output=True,
                 text=True,
-                shell=os.name == 'nt'
+                shell=os.name == 'nt'  # Windows 上使用 shell
             )
             if result.returncode == 0:
-                npo_available = True
+                npo_cmd = candidate
+                break
         except (subprocess.CalledProcessError, FileNotFoundError):
-            pass
-    
-    if not npo_available:
+            continue
+
+    if npo_cmd is None:
         click.echo("Error: npo 命令不可用，请先安装 npm-offline-packager", err=True)
         click.echo("运行: npm install -g npm-offline-packager", err=True)
         return
-    
-    cmd = ["npo", "fetch", "-d", target_d]
+
+    cmd = npo_cmd + ["fetch", "-d", target_d]
     
     if generated_p:
         cmd.extend(["-p", str(generated_p)])

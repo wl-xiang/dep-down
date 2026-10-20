@@ -90,8 +90,8 @@ npo fetch -d ./offline-packages vue react axios
 **内网安装**
 
 ```bash
-# 方式: 本地文件源（需要将package.json中的依赖添加到offline-packages目录）
-npm install --install-links=./offline-packages
+# 方式: 从本地 tarball 离线安装（无需联网）
+npm install ./offline-packages/*.tgz --offline
 ```
 
 ***

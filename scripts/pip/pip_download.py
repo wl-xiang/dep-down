@@ -6,9 +6,26 @@ import shutil
 import tarfile
 from pathlib import Path
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+
+
+def resolve_path(value):
+    """将相对路径按当前工作目录解析；若不存在则回退到脚本所在目录。
+
+    这样无论从仓库根目录还是脚本目录调用，随脚本一起存放的默认文件（如
+    requirements.txt）都能被找到；显式传入且存在的路径保持不变。
+    """
+    p = Path(value)
+    if p.is_absolute() or p.exists():
+        return p
+    fallback = SCRIPT_DIR / p
+    return fallback if fallback.exists() else p
+
 
 def load_env():
     env_file = Path(".env.pip")
+    if not env_file.exists():
+        env_file = SCRIPT_DIR / ".env.pip"
     env_vars = {}
     if env_file.exists():
         with open(env_file, "r") as f:
@@ -98,6 +115,9 @@ def main(platform, arch, python_version, glibc, d, r, index_url, need_pack, pack
         target_index_url = target_index_url.strip().strip("`").strip("'").strip('"')
 
     target_r = "requirements.txt" if target_r.lower() == "auto" else target_r
+    # 解析依赖文件路径：优先当前目录，找不到时回退到脚本目录（随脚本存放）
+    if target_r and target_r.strip():
+        target_r = str(resolve_path(target_r))
 
     for plat in target_platforms:
         if plat == "linux":
