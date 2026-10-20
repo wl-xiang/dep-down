@@ -192,7 +192,7 @@ jobs:
           manifest = {
               "name": "npm-offline-packages",
               "version": "1.0.0",
-              "private": True,
+              "private": False,
               "description": "Offline install manifest: every dependency resolves to a local tarball, so `npm install --offline` never contacts a registry.",
               "dependencies": dict(sorted(deps.items())),
           }
