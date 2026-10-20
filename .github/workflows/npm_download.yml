@@ -166,11 +166,54 @@ jobs:
             exit 1
           fi
 
+      - name: Generate offline install manifest
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import tarfile
+          from pathlib import Path
+
+          dest = Path("packages")
+          tarballs = sorted(dest.glob("*.tgz")) + sorted(dest.glob("*/*.tgz"))
+          deps = {}
+          for tgz in tarballs:
+              meta = None
+              with tarfile.open(tgz, "r:gz") as tar:
+                  for member in tar.getmembers():
+                      if member.name in ("package/package.json", "package.json"):
+                          meta = json.loads(tar.extractfile(member).read().decode("utf-8"))
+                          break
+              if not meta or not meta.get("name"):
+                  raise SystemExit(f"cannot read a package name from {tgz}")
+              deps[meta["name"]] = "file:./" + tgz.relative_to(dest).as_posix()
+          if not deps:
+              raise SystemExit("no *.tgz files found in packages/")
+          manifest = {
+              "name": "npm-offline-packages",
+              "version": "1.0.0",
+              "private": True,
+              "description": "Offline install manifest: every dependency resolves to a local tarball, so `npm install --offline` never contacts a registry.",
+              "dependencies": dict(sorted(deps.items())),
+          }
+          (dest / "package.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+          print(f"Wrote packages/package.json with {len(deps)} local file: dependencies")
+          PY
+
+      - name: Stage artifact as a top-level packages/ folder
+        run: |
+          set -euo pipefail
+          rm -rf dist
+          mkdir -p dist
+          cp -r packages dist/packages
+          echo 'Artifact will extract to a top-level packages/ folder:'
+          ls -1 dist/
+
       - name: Upload packages artifact
         uses: actions/upload-artifact@v4
         with:
           name: npm_packages
-          path: packages
+          path: dist
           if-no-files-found: error
 
       - name: Generate workflow summary
@@ -231,7 +274,16 @@ jobs:
             echo ""
             echo "### Offline install guide"
             echo ""
-            echo "Download the \`npm_packages\` artifact from this run and extract it. On the offline machine, in your project root (where \`packages/\` and your \`package.json\` live), install straight from the local tarballs so npm never contacts the network:"
+            echo "Download the \`npm_packages\` artifact and extract it. The archive contains a single top-level \`packages/\` folder, so nothing gets scattered into your current directory. On the offline machine, install with zero network access:"
+            echo ""
+            echo '```bash'
+            echo "cd packages"
+            echo "npm install --offline"
+            echo '```'
+            echo ""
+            echo "The bundled \`packages/package.json\` declares every dependency as a local tarball (\`file:./xxx.tgz\`), so npm resolves the whole tree from files on disk and never contacts any registry."
+            echo ""
+            echo "Prefer installing straight into your own project? From your project root:"
             echo ""
             echo '```bash'
             echo "# bash / Git Bash"
@@ -243,6 +295,8 @@ jobs:
             echo '```powershell'
             echo "npm install (Get-ChildItem ./packages/*.tgz).FullName --offline"
             echo '```'
+            echo ""
+            echo "> If you hit \`npm error class extends value undefined is not a constructor or null\`, that points to a broken or version-mismatched Node.js + npm installation on the offline machine (npm's own bundled modules fail to load), not to these packages — any npm command would fail the same way. Reinstall Node.js and clear stale global npm directories so \`node -v\` and \`npm -v\` are consistent."
             echo ""
             echo "The \`packages/\` folder is also a valid \`package.json\` project, so it can be published to a private registry (\`npo publish\`) or imported into Verdaccio for team-wide offline use — see \`docs/npm-offline-package-guide.md\`."
           } >> "$GITHUB_STEP_SUMMARY"

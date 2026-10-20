@@ -1,4 +1,5 @@
 wheels/
 packages/
 node_modules/
+dist/
 tarballs/
