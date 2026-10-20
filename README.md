@@ -59,7 +59,7 @@ pip install -r requirements.txt
 3. 在左侧工作流列表中选择 **Npm Download**，点击 **Run workflow**。
 4. 填写触发参数（见下表），点击 **Run workflow** 启动。
 5. 运行完成后打开该次运行，在 **Summary** 底部的 **Artifacts** 区域下载 `npm_packages` 产物。
-6. 解压后在内网机器上执行 `npm install ./packages/*.tgz --offline` 即可离线安装（详见下方“内网安装”）。
+6. 解压产物后得到一个顶层 `packages/` 文件夹（所有内容都在其中，不会散落到当前目录）。在内网机器上进入该目录执行 `npm install --offline` 即可完全离线安装（详见下方“内网安装”）。
 
 ### 触发参数（Inputs）
 
@@ -76,9 +76,9 @@ pip install -r requirements.txt
 
 ### 产物内容
 
-产物 `npm_packages` 即下载目录 `packages/`，包含：
+产物 `npm_packages` 解压后为顶层 `packages/` 文件夹（不会散落到当前目录），其中包含：
 - 所有依赖的 `.tgz` 离线包（含全部子依赖）；
-- 一个 `package.json`（记录本次下载的顶层依赖，便于留档与后续发布到私有仓库）。
+- 一个 `package.json`：把每个依赖都声明为本地 tarball（`file:./xxx.tgz`）的离线安装清单，在 `packages/` 内执行 `npm install --offline` 时 npm 只读取磁盘上的 tarball，不访问任何 registry。
 
 ### 校验机制
 
@@ -87,6 +87,7 @@ pip install -r requirements.txt
 - `packages` 输入仅为空白时报错。
 - 扫描 `npo_fetch.py` 的下载日志，发现 `ERROR` / `Error:` / `下载失败` 即判定失败。
 - 校验 `packages/` 下存在 `.tgz` 文件，且存在 `packages/package.json`。
+- 基于下载到的全部 `.tgz` 生成 `packages/package.json` 离线安装清单（每个依赖为 `file:./...`），并将产物归档为顶层 `packages/` 文件夹。
 
 ## 功能特性
 
@@ -265,12 +266,18 @@ pip install -r requirements.txt
 ```
 
 ### npm 包安装
-1. 解压 `packages.tar.gz`（或下载 Action 产物 `npm_packages`）
-2. 进入解压后的目录（该目录下应有 `package.json` 与 `packages/`）
-3. 运行（从本地 tarball 离线安装，无需联网）：
+1. 下载并解压 Action 产物 `npm_packages`（或解压 `packages.tar.gz`），得到顶层 `packages/` 文件夹。
+2. 进入 `packages/` 目录：
 ```bash
-npm install ./packages/*.tgz --offline
+cd packages
 ```
+3. 执行离线安装（npm 只读取本地 tarball，不访问任何网络）：
+```bash
+npm install --offline
+```
+4. 如希望直接安装进你自己的项目，则在项目根目录执行 `npm install ./packages/*.tgz --offline`（Windows PowerShell：`npm install (Get-ChildItem ./packages/*.tgz).FullName --offline`）。
+
+> 若遇到 `npm error class extends value undefined is not a constructor or null`，通常说明离线机器上的 Node.js + npm 安装损坏或版本不匹配（npm 自身内置模块加载失败），此时任意 npm 命令都会报同样的错，与下载的包无关。请重装 Node.js 并清理残留的全局 npm 目录，确保 `node -v` 与 `npm -v` 版本匹配。
 
 ## 项目结构
 
