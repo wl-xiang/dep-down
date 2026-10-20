@@ -165,3 +165,88 @@ jobs:
           name: wheels_${{ inputs.platform }}_${{ inputs.arch }}_py${{ inputs.python_version }}
           path: wheels
           if-no-files-found: error
+
+      - name: Generate workflow summary
+        env:
+          PLATFORM: ${{ inputs.platform }}
+          ARCH: ${{ inputs.arch }}
+          PYTHON_VERSION: ${{ inputs.python_version }}
+          PIP_MIRROR: ${{ inputs.pip_mirror }}
+          INDEX_URL: ${{ steps.mirror.outputs.url }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          # Map platform/arch to the pip platform tag and its libc/runtime requirement.
+          case "$PLATFORM/$ARCH" in
+            linux/x86_64|linux/amd64)  pip_platform='manylinux_2_17_x86_64'; libc='glibc >= 2.17 (manylinux2014)' ;;
+            linux/arm64|linux/aarch64) pip_platform='manylinux_2_17_aarch64';  libc='glibc >= 2.17 (manylinux2014)' ;;
+            win/x86_64|win/amd64)      pip_platform='win_amd64';               libc='N/A (Windows / MSVC runtime)' ;;
+            win/arm64|win/aarch64)     pip_platform='win_arm64';               libc='N/A (Windows / MSVC runtime)' ;;
+            *)                         pip_platform='unknown';                 libc='unknown' ;;
+          esac
+
+          # Packages declared in requirements.txt (skip blank lines and comments).
+          pkg_list="$(grep -vE '^[[:space:]]*(#|$)' requirements.txt 2>/dev/null | sed 's/^[[:space:]]*/- /' || true)"
+          if [ -z "$pkg_list" ]; then
+            pkg_list='- (none)'
+          fi
+
+          # Downloaded wheel files.
+          wheel_lines=''
+          wheel_count=0
+          for whl in wheels/*.whl; do
+            wheel_lines+="- \`$(basename "$whl")\`"$'\n'
+            wheel_count=$((wheel_count + 1))
+          done
+          if [ -z "$wheel_lines" ]; then
+            wheel_lines='- (no wheels found)'
+          fi
+
+          # Reproduce the exact pip command run by pip_download.py.
+          pip_cmd="pip download --only-binary=:all: --platform $pip_platform --python-version $PYTHON_VERSION -d ./wheels"
+          if [ -n "${INDEX_URL:-}" ]; then
+            pip_cmd="$pip_cmd --index-url $INDEX_URL"
+          fi
+          pip_cmd="$pip_cmd -r requirements.txt"
+
+          {
+            echo "## Pip download summary"
+            echo ""
+            echo "| Item | Value |"
+            echo "| --- | --- |"
+            echo "| Target platform | \`$PLATFORM\` |"
+            echo "| Target architecture | \`$ARCH\` |"
+            echo "| Python version | \`$PYTHON_VERSION\` |"
+            echo "| pip platform tag | \`$pip_platform\` |"
+            echo "| libc / runtime | \`$libc\` |"
+            echo "| pip mirror preset | \`$PIP_MIRROR\` |"
+            echo "| pip index URL | $INDEX_URL |"
+            echo ""
+            echo "### Packages in requirements.txt"
+            echo ""
+            echo "$pkg_list"
+            echo ""
+            echo "### Downloaded wheels ($wheel_count file(s))"
+            echo ""
+            printf '%s' "$wheel_lines"
+            echo ""
+            echo "### Offline install guide"
+            echo ""
+            echo "Download the \`wheels_${PLATFORM}_${ARCH}_py${PYTHON_VERSION}\` artifact from this run, extract it, then install offline on a \`$PLATFORM\`/\`$ARCH\` machine with Python \`$PYTHON_VERSION\`:"
+            echo ""
+            echo '```bash'
+            echo "cd wheels"
+            echo "pip install -r requirements.txt"
+            echo '```'
+            echo ""
+            echo "The bundled \`requirements.txt\` begins with \`--no-index --find-links=./\`, so pip installs only from the local wheels and never contacts the network."
+            echo ""
+            echo "### pip download command"
+            echo ""
+            echo '```bash'
+            echo "$pip_cmd"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo 'Workflow summary written to $GITHUB_STEP_SUMMARY'
