@@ -1,0 +1,250 @@
+name: Npm Download
+
+on:
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: 'Content of packages.txt. One package per line; use $ to represent a newline (e.g. vue$axios$react). Leave empty to use the repo file selected by "source".'
+        type: string
+        required: false
+        default: ''
+      source:
+        description: 'Repo file to download from when "packages" is empty'
+        type: choice
+        required: true
+        default: 'packages.txt'
+        options:
+          - 'packages.txt'
+          - 'package.json'
+      registry:
+        description: 'npm registry mirror'
+        type: choice
+        required: true
+        default: 'npmmirror (taobao)'
+        options:
+          - 'npmmirror (taobao)'
+          - 'Tencent'
+          - 'Huawei'
+          - 'THU (tuna)'
+          - 'USTC'
+          - 'Official (npmjs.org)'
+          - 'Other (custom URL)'
+      custom_registry_url:
+        description: 'Custom npm registry URL (used only when registry is "Other (custom URL)")'
+        type: string
+        required: false
+        default: ''
+      node_version:
+        description: 'Node.js version used to run npm-offline-packager (npo)'
+        type: choice
+        required: true
+        default: '20'
+        options:
+          - '18'
+          - '20'
+          - '22'
+          - '24'
+
+permissions:
+  contents: read
+
+jobs:
+  npm-download:
+    name: Download npm packages
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Resolve npm registry URL
+        id: registry
+        env:
+          NPM_REGISTRY: ${{ inputs.registry }}
+          CUSTOM_REGISTRY_URL: ${{ inputs.custom_registry_url }}
+        run: |
+          set -euo pipefail
+          case "$NPM_REGISTRY" in
+            'npmmirror (taobao)')   url='https://registry.npmmirror.com' ;;
+            'Tencent')              url='https://mirrors.cloud.tencent.com/npm/' ;;
+            'Huawei')               url='https://repo.huaweicloud.com/repository/npm/' ;;
+            'THU (tuna)')           url='https://mirrors.tuna.tsinghua.edu.cn/npm/' ;;
+            'USTC')                 url='https://mirrors.ustc.edu.cn/npm/' ;;
+            'Official (npmjs.org)') url='https://registry.npmjs.org' ;;
+            'Other (custom URL)')
+              url="$(printf '%s' "$CUSTOM_REGISTRY_URL" | tr -d '[:space:]')"
+              if [ -z "$url" ]; then
+                echo '::error::registry is "Other (custom URL)" but custom_registry_url is empty.'
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::Unknown registry value: $NPM_REGISTRY"
+              exit 1
+              ;;
+          esac
+          echo "Using npm registry: $url"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install click jinja2
+
+      - name: Install npm-offline-packager
+        env:
+          REGISTRY_URL: ${{ steps.registry.outputs.url }}
+        run: |
+          set -euo pipefail
+          npm install -g --registry "$REGISTRY_URL" npm-offline-packager
+          npo --version
+
+      - name: Write packages.txt from input
+        if: ${{ inputs.packages != '' }}
+        env:
+          PACKAGES: ${{ inputs.packages }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$(printf '%s' "$PACKAGES" | sed 's/\$/\n/g')" > scripts/npm/packages.txt
+          if ! grep -qE '[^[:space:]]' scripts/npm/packages.txt; then
+            echo '::error::The packages input contains only whitespace.'
+            exit 1
+          fi
+          echo '--- scripts/npm/packages.txt (from input) ---'
+          cat scripts/npm/packages.txt
+
+      - name: Download npm packages
+        env:
+          REGISTRY_URL: ${{ steps.registry.outputs.url }}
+          SOURCE: ${{ inputs.source }}
+          HAS_INPUT: ${{ inputs.packages != '' }}
+        run: |
+          set -euo pipefail
+          if [ "$SOURCE" = 'package.json' ] && [ "$HAS_INPUT" != 'true' ]; then
+            # 使用仓库内的 package.json；置空 PT 以覆盖 .env.npm 中 packages.txt 的默认值
+            export PT=''
+            python scripts/npm/npo_fetch.py \
+              -d ./packages \
+              --registry "$REGISTRY_URL" \
+              -p scripts/npm/package.json \
+              --need-pack 2>&1 | tee download.log
+          else
+            python scripts/npm/npo_fetch.py \
+              -d ./packages \
+              --registry "$REGISTRY_URL" \
+              --pt scripts/npm/packages.txt \
+              --need-pack 2>&1 | tee download.log
+          fi
+          # npo_fetch.py 会吞掉底层失败并仍以 0 退出，因此扫描日志。
+          if grep -nE '^ERROR|^Error:|下载失败|Error:' download.log; then
+            echo '::error::npm download reported errors (see matching lines above).'
+            exit 1
+          fi
+
+      - name: Verify packages
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          tgzs=(packages/*.tgz packages/*/*.tgz)
+          if [ ${#tgzs[@]} -eq 0 ]; then
+            echo '::error::No *.tgz files found in packages/.'
+            exit 1
+          fi
+          echo "Downloaded ${#tgzs[@]} package tarball(s):"
+          ls -1 packages/
+          if [ ! -f packages/package.json ]; then
+            echo '::error::packages/package.json is missing (needed for offline install).'
+            exit 1
+          fi
+
+      - name: Upload packages artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm_packages
+          path: packages
+          if-no-files-found: error
+
+      - name: Generate workflow summary
+        env:
+          REGISTRY_URL: ${{ steps.registry.outputs.url }}
+          NPM_REGISTRY: ${{ inputs.registry }}
+          SOURCE: ${{ inputs.source }}
+          HAS_INPUT: ${{ inputs.packages != '' }}
+          NODE_VERSION: ${{ inputs.node_version }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          # 本次请求的包列表。
+          if [ "$HAS_INPUT" = 'true' ]; then
+            req_list="$(grep -vE '^[[:space:]]*(#|$)' scripts/npm/packages.txt | sed 's/^[[:space:]]*/- /' || true)"
+            req_source='packages input'
+          elif [ "$SOURCE" = 'package.json' ]; then
+            req_list="$(python3 -c 'import json; d = json.load(open("scripts/npm/package.json", encoding="utf-8"))["dependencies"]; print("\n".join("- %s (%s)" % (k, v) for k, v in d.items()))')"
+            req_source='scripts/npm/package.json'
+          else
+            req_list="$(grep -vE '^[[:space:]]*(#|$)' scripts/npm/packages.txt | sed 's/^[[:space:]]*/- /' || true)"
+            req_source='scripts/npm/packages.txt'
+          fi
+          if [ -z "$req_list" ]; then
+            req_list='- (none)'
+          fi
+
+          # 已下载的 tarball。
+          tarball_lines=''
+          tarball_count=0
+          for tgz in packages/*.tgz packages/*/*.tgz; do
+            tarball_lines+="- \`$(basename "$tgz")\`"$'\n'
+            tarball_count=$((tarball_count + 1))
+          done
+          if [ -z "$tarball_lines" ]; then
+            tarball_lines='- (none)'
+          fi
+
+          {
+            echo "## Npm download summary"
+            echo ""
+            echo "| Item | Value |"
+            echo "| --- | --- |"
+            echo "| Requested from | \`$req_source\` |"
+            echo "| npm registry preset | \`$NPM_REGISTRY\` |"
+            echo "| npm registry URL | $REGISTRY_URL |"
+            echo "| Node.js version | \`$NODE_VERSION\` |"
+            echo "| Tool | \`npm-offline-packager (npo)\` |"
+            echo ""
+            echo "### Requested packages"
+            echo ""
+            echo "$req_list"
+            echo ""
+            echo "### Downloaded tarballs ($tarball_count file(s))"
+            echo ""
+            printf '%s' "$tarball_lines"
+            echo ""
+            echo "### Offline install guide"
+            echo ""
+            echo "Download the \`npm_packages\` artifact from this run and extract it. On the offline machine, in your project root (where \`packages/\` and your \`package.json\` live), install straight from the local tarballs so npm never contacts the network:"
+            echo ""
+            echo '```bash'
+            echo "# bash / Git Bash"
+            echo "npm install ./packages/*.tgz --offline"
+            echo '```'
+            echo ""
+            echo "On Windows PowerShell:"
+            echo ""
+            echo '```powershell'
+            echo "npm install (Get-ChildItem ./packages/*.tgz).FullName --offline"
+            echo '```'
+            echo ""
+            echo "The \`packages/\` folder is also a valid \`package.json\` project, so it can be published to a private registry (\`npo publish\`) or imported into Verdaccio for team-wide offline use — see \`docs/npm-offline-package-guide.md\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo 'Workflow summary written to $GITHUB_STEP_SUMMARY'

@@ -24,7 +24,7 @@
 | `python_version` | 是 | `3.6`–`3.14` | `3.10` | 目标 Python 版本 |
 | `pip_mirror` | 是 | `THU (tuna)` / `Aliyun` / `USTC` / `Official (pypi.org)` / `Other (custom URL)` | `THU (tuna)` | pip 镜像源 |
 | `custom_mirror_url` | 否 | 任意 URL | 空 | 仅当 `pip_mirror` 为 `Other (custom URL)` 时必填 |
-| `requirements` | 否 | 文本 | 空 | requirements.txt 内容；留空则使用仓库内的 `requirements.txt` |
+| `requirements` | 否 | 文本 | 空 | requirements.txt 内容；留空则使用仓库内的 `scripts/pip/requirements.txt` |
 
 > **提示：`requirements` 输入框无法直接换行**，请使用 `$` 表示换行。例如输入
 > `requests!=2.0.0$fastapi$oracledb` 会被解析为三行：
@@ -48,9 +48,49 @@ pip install -r requirements.txt
 - 扫描 `pip_download.py` 的下载日志，发现 `ERROR` / `Error:` / `失败` 即判定失败。
 - 校验 `wheels/` 下存在 `.whl` 文件，并校验 `wheels/requirements.txt` 首行正确。
 
+## 通过 GitHub Action 下载并打包 npm 包
+
+本仓库另提供一个人工触发的 GitHub Actions 工作流 `.github/workflows/npm_download.yml`，无需克隆仓库或安装环境，直接在 GitHub 网站上即可把指定 npm 包（含全部子依赖）下载并打包成可下载的产物（artifact）。
+
+### 使用方法（Fork 后用）
+
+1. **Fork 本仓库** 到你自己的 GitHub 账号（工作流需要以你的身份在 Actions 中运行）。
+2. 进入 Fork 后的仓库，点击顶部 **Actions** 标签。
+3. 在左侧工作流列表中选择 **Npm Download**，点击 **Run workflow**。
+4. 填写触发参数（见下表），点击 **Run workflow** 启动。
+5. 运行完成后打开该次运行，在 **Summary** 底部的 **Artifacts** 区域下载 `npm_packages` 产物。
+6. 解压后在内网机器上执行 `npm install ./packages/*.tgz --offline` 即可离线安装（详见下方“内网安装”）。
+
+### 触发参数（Inputs）
+
+| 参数 | 必填 | 取值 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `packages` | 否 | 文本 | 空 | 包列表；一行一个包名，用 `$` 表示换行。留空则使用 `source` 选中的仓库文件 |
+| `source` | 是 | `packages.txt` / `package.json` | `packages.txt` | 当 `packages` 留空时使用的仓库文件 |
+| `registry` | 是 | `npmmirror (taobao)` / `Tencent` / `Huawei` / `THU (tuna)` / `USTC` / `Official (npmjs.org)` / `Other (custom URL)` | `npmmirror (taobao)` | npm 镜像源 |
+| `custom_registry_url` | 否 | 任意 URL | 空 | 仅当 `registry` 为 `Other (custom URL)` 时必填 |
+| `node_version` | 是 | `18` / `20` / `22` / `24` | `20` | 运行 npo 的 Node.js 版本 |
+
+> **提示：`packages` 输入框无法直接换行**，请使用 `$` 表示换行。例如输入 `vue$axios$react`
+> 会被解析为三行 `vue`、`axios`、`react`。当同时填写了 `packages` 与选择了 `source` 时，以 `packages` 为准。
+
+### 产物内容
+
+产物 `npm_packages` 即下载目录 `packages/`，包含：
+- 所有依赖的 `.tgz` 离线包（含全部子依赖）；
+- 一个 `package.json`（记录本次下载的顶层依赖，便于留档与后续发布到私有仓库）。
+
+### 校验机制
+
+工作流内置以下检查，任一失败都会以错误退出：
+- 解析镜像源：`Other (custom URL)` 但 `custom_registry_url` 为空，或未知镜像值时报错。
+- `packages` 输入仅为空白时报错。
+- 扫描 `npo_fetch.py` 的下载日志，发现 `ERROR` / `Error:` / `下载失败` 即判定失败。
+- 校验 `packages/` 下存在 `.tgz` 文件，且存在 `packages/package.json`。
+
 ## 功能特性
 
-### Python 包下载 (pip_download.py)
+### Python 包下载 (scripts/pip/pip_download.py)
 - 支持多平台：Linux (manylinux_2_17) 和 Windows
 - 支持多架构：x86_64/amd64、arm64/aarch64
 - 支持多 Python 版本：3.6、3.8-3.13 及后续版本
@@ -58,7 +98,7 @@ pip install -r requirements.txt
 - 支持从 requirements.txt 或直接指定包名下载
 - 自动打包功能
 
-### npm 包下载 (npo_fetch.py)
+### npm 包下载 (scripts/npm/npo_fetch.py)
 - 支持从 package.json 或 packages.txt 下载
 - 使用 npm-offline-packager (npo) 工具
 - 自动基于 packages.txt 生成 package.json（使用 jinja2 模板）
@@ -91,10 +131,10 @@ npm install -g npm-offline-packager
 或使用提供的脚本：
 ```bash
 # Linux/Mac
-./npo_setup.sh
+./scripts/npm/npo_setup.sh
 
 # Windows (Git Bash)
-./npo_setup.sh
+./scripts/npm/npo_setup.sh
 ```
 
 ## 快速开始
@@ -104,19 +144,19 @@ npm install -g npm-offline-packager
 #### 基本用法
 ```bash
 # 使用默认配置
-python pip_download.py
+python scripts/pip/pip_download.py
 
 # 指定 Python 版本
-python pip_download.py -v 311
+python scripts/pip/pip_download.py -v 311
 
 # 指定平台和架构
-python pip_download.py -p linux -a arm64
+python scripts/pip/pip_download.py -p linux -a arm64
 
 # 启用打包
-python pip_download.py --need-pack
+python scripts/pip/pip_download.py --need-pack
 
 # 直接下载指定包
-python pip_download.py requests flask
+python scripts/pip/pip_download.py requests flask
 ```
 
 #### 完整参数
@@ -139,16 +179,16 @@ Options:
 #### 基本用法
 ```bash
 # 使用 packages.txt
-python npo_fetch.py --pt packages.txt
+python scripts/npm/npo_fetch.py --pt packages.txt
 
 # 使用 package.json
-python npo_fetch.py -p package.json
+python scripts/npm/npo_fetch.py -p package.json
 
 # 直接下载指定包
-python npo_fetch.py vue axios react
+python scripts/npm/npo_fetch.py vue axios react
 
 # 启用打包
-python npo_fetch.py --need-pack
+python scripts/npm/npo_fetch.py --need-pack
 ```
 
 #### 完整参数
@@ -166,7 +206,7 @@ Options:
 
 ## 配置文件
 
-### .env.pip (Python 配置)
+### .env.pip (scripts/pip/.env.pip)
 ```env
 PLATFORM=linux
 ARCH=x86_64
@@ -177,7 +217,7 @@ INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 NEED_PACK=true
 ```
 
-### .env.npm (npm 配置)
+### .env.npm (scripts/npm/.env.npm)
 ```env
 REGISTRY=https://registry.npmmirror.com
 D=./packages/
@@ -225,37 +265,44 @@ pip install -r requirements.txt
 ```
 
 ### npm 包安装
-1. 解压 `packages.tar.gz`
-2. 进入解压后的目录
-3. 运行：
+1. 解压 `packages.tar.gz`（或下载 Action 产物 `npm_packages`）
+2. 进入解压后的目录（该目录下应有 `package.json` 与 `packages/`）
+3. 运行（从本地 tarball 离线安装，无需联网）：
 ```bash
-npm install --registry file://./packages
+npm install ./packages/*.tgz --offline
 ```
 
 ## 项目结构
 
 ```
 .
+├── .github/
+│   └── workflows/
+│       ├── pip_download.yml       # pip 离线下载 Action
+│       └── npm_download.yml       # npm 离线下载 Action
 ├── docs/                          # 文档目录
 │   ├── npm-offline-package-guide.md
 │   ├── platform-qa.md
 │   ├── platforms.md
 │   └── prompt.pip.txt
-├── .env.npm                       # npm 配置
-├── .env.pip                       # Python 配置
+├── scripts/
+│   ├── pip/                       # pip 相关文件与脚本
+│   │   ├── .env.pip               # pip 配置
+│   │   ├── pip_download.py        # Python 包下载工具
+│   │   └── requirements.txt       # Python 依赖列表
+│   └── npm/                       # npm 相关文件与脚本
+│       ├── .env.npm               # npm 配置
+│       ├── npm_install.sh         # npm 离线安装脚本
+│       ├── npo_fetch.py           # npm 包下载工具 (Python 版本)
+│       ├── npo_fetch.sh           # npm 包下载工具 (Shell 版本)
+│       ├── npo_setup.sh           # npo 安装脚本
+│       ├── package.json           # npm 项目配置
+│       ├── package.json.j2        # jinja2 模板
+│       └── packages.txt           # npm 包列表
 ├── .gitignore
 ├── README.md
 ├── clear.bat                      # Windows 清理脚本
-├── clear.sh                       # Linux/Mac 清理脚本
-├── npm_install.sh
-├── npo_fetch.py                   # npm 包下载工具 (Python 版本)
-├── npo_fetch.sh                   # npm 包下载工具 (Shell 版本)
-├── npo_setup.sh                   # npo 安装脚本
-├── package.json                   # npm 项目配置
-├── package.json.j2                # jinja2 模板
-├── packages.txt                   # npm 包列表
-├── pip_download.py                # Python 包下载工具
-└── requirements.txt               # Python 依赖列表
+└── clear.sh                       # Linux/Mac 清理脚本
 ```
 
 ## 镜像源

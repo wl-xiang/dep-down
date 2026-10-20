@@ -119,13 +119,13 @@ jobs:
           REQUIREMENTS: ${{ inputs.requirements }}
         run: |
           set -euo pipefail
-          printf '%s\n' "$(printf '%s' "$REQUIREMENTS" | sed 's/\$/\n/g')" > requirements.txt
-          if ! grep -qE '[^[:space:]]' requirements.txt; then
+          printf '%s\n' "$(printf '%s' "$REQUIREMENTS" | sed 's/\$/\n/g')" > scripts/pip/requirements.txt
+          if ! grep -qE '[^[:space:]]' scripts/pip/requirements.txt; then
             echo '::error::The requirements input contains only whitespace.'
             exit 1
           fi
-          echo '--- requirements.txt (from input) ---'
-          cat requirements.txt
+          echo '--- scripts/pip/requirements.txt (from input) ---'
+          cat scripts/pip/requirements.txt
 
       - name: Download wheels
         env:
@@ -136,12 +136,12 @@ jobs:
           INDEX_URL: ${{ steps.mirror.outputs.url }}
         run: |
           set -euo pipefail
-          python pip_download.py \
+          python scripts/pip/pip_download.py \
             -p "$PLATFORM" \
             -a "$ARCH" \
             -v "$PYTHON_VERSION" \
             -g "$GLIBC_VERSION" \
-            -r requirements.txt \
+            -r scripts/pip/requirements.txt \
             -i "$INDEX_URL" \
             --need-pack 2>&1 | tee download.log
           # pip_download.py swallows pip failures and exits 0, so scan the log.
@@ -215,7 +215,7 @@ jobs:
           esac
 
           # Packages declared in requirements.txt (skip blank lines and comments).
-          pkg_list="$(grep -vE '^[[:space:]]*(#|$)' requirements.txt 2>/dev/null | sed 's/^[[:space:]]*/- /' || true)"
+          pkg_list="$(grep -vE '^[[:space:]]*(#|$)' scripts/pip/requirements.txt 2>/dev/null | sed 's/^[[:space:]]*/- /' || true)"
           if [ -z "$pkg_list" ]; then
             pkg_list='- (none)'
           fi
@@ -236,7 +236,7 @@ jobs:
           if [ -n "${INDEX_URL:-}" ]; then
             pip_cmd="$pip_cmd --index-url $INDEX_URL"
           fi
-          pip_cmd="$pip_cmd -r requirements.txt"
+          pip_cmd="$pip_cmd -r scripts/pip/requirements.txt"
 
           {
             echo "## Pip download summary"
