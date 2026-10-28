@@ -1,0 +1,48 @@
+# 离线 Python 开发环境（devcontainer-src）
+
+本目录由 GitHub Action `build-devcontainer` 生成，需配合镜像包
+`devcontainer-bundle_{{TAG}}.tgz` 在内网离线使用。
+
+| 项目 | 值 |
+| --- | --- |
+| 平台 | {{DOCKER_PLATFORM}} |
+| Python | {{PYTHON_VERSION}} |
+| 镜像 TAG | `{{TAG}}` |
+| 镜像 | `{{IMAGE_PREFIX}}-prod` / `{{IMAGE_PREFIX}}-dev` |
+| 外挂服务 | {{SERVICES_SUMMARY}} |
+| pip 镜像源 | {{PIP_MIRROR}} |
+
+## 首次使用（内网机器）
+
+前置要求：Docker >= 20.10，且带 compose v2 插件（`docker compose version` 可执行）。
+
+```bash
+# 1. 导入镜像（在 bundle 包解压出的 images.tar 上执行）
+docker load -i images.tar
+
+# 2. 进入本目录
+cd devcontainer-src
+
+# 3. 将应用代码放入本目录（默认 prod 命令: {{PROD_COMMAND}}）
+
+# 4. 开发
+make shell        # 交互式 bash
+make lint         # ruff check .
+make compile      # python -m compileall -q .
+make test         # pytest -q
+
+# 5. 运行
+make up && make logs
+make down         # 停止
+```
+
+## 说明
+
+- `Dockerfile` / `docker-compose.yaml` / `Makefile` / `requirements.txt` / `wheels/`
+  均在外网构建时生成，请勿手工修改其中的镜像名与 TAG。
+- 源码目录默认整目录挂载为容器 `/app`（见 compose 中 app/dev 服务的 `volumes`），
+  如需挂载其他目录请修改挂载路径。
+- 容器内离线安装额外依赖：`pip install --no-index --find-links=/wheels <pkg>`。
+- `make build` 需要联网（apt 源），离线机器请勿使用；镜像请统一通过 bundle 导入。
+- `make help` 查看全部可用目标。
+- {{DEV_TOOLS_NOTE}}

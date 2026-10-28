@@ -48,6 +48,31 @@ pip install -r requirements.txt
 - 扫描 `pip_download.py` 的下载日志，发现 `ERROR` / `Error:` / `失败` 即判定失败。
 - 校验 `wheels/` 下存在 `.whl` 文件，并校验 `wheels/requirements.txt` 首行正确。
 
+## 通过 GitHub Action 构建离线 Python 开发环境镜像（Build DevContainer）
+
+本仓库提供一个人工触发的工作流 `.github/workflows/build-devcontainer.yml`，在外网按参数（平台、Python 版本、glibc、pip 源与包、APT 工具、个性化安装命令、nginx/postgres 外挂服务等）构建 prod/dev 两个 Docker 镜像并打包。内网机器只需 Docker，通过 Volume 挂载源码 + docker compose 即可开发与运行，本机无需安装任何运行环境。
+
+### 使用方法（Fork 后用）
+
+1. Fork 本仓库，进入 **Actions** → **Build DevContainer** → **Run workflow**。
+2. 填写参数（完整参数表见 [docs/offline-devcontainer.md](docs/offline-devcontainer.md)）。
+3. 运行完成后，在 **Summary** 底部下载两个产物：
+   - `devcontainer-src_<时间戳>.tgz`：运行时源码包（Dockerfile、docker-compose.yaml、Makefile、requirements.txt、wheels/、scripts/）
+   - `devcontainer-bundle_<时间戳>.tgz`：镜像 Bundle 包（`docker save` 的 prod/dev/nginx/postgres 镜像）
+4. Summary 页同时给出构建摘要（参数、镜像清单、产物大小）与内网使用步骤。
+
+### 内网使用
+
+```bash
+tar xzf devcontainer-bundle_<ts>.tgz && docker load -i images.tar
+tar xzf devcontainer-src_<ts>.tgz && cd devcontainer-src
+make shell      # dev 容器交互 bash（ruff/pytest 已内置）
+make lint && make compile && make test
+make up         # docker compose up -d 运行 python main.py
+```
+
+> 参数校验（如依赖未启用的外挂服务）、多平台/多 glibc 组合、镜像命名与产物规范等说明详见 [docs/offline-devcontainer.md](docs/offline-devcontainer.md)。
+
 ## 通过 GitHub Action 下载并打包 npm 包
 
 本仓库另提供一个人工触发的 GitHub Actions 工作流 `.github/workflows/npm_download.yml`，无需克隆仓库或安装环境，直接在 GitHub 网站上即可把指定 npm 包（含全部子依赖）下载并打包成可下载的产物（artifact）。
@@ -304,9 +329,11 @@ npm install --offline
 ├── .github/
 │   └── workflows/
 │       ├── pip_download.yml       # pip 离线下载 Action
-│       └── npm_download.yml       # npm 离线下载 Action
+│       ├── npm_download.yml       # npm 离线下载 Action
+│       └── build-devcontainer.yml # 离线开发环境镜像构建 Action
 ├── docs/                          # 文档目录
 │   ├── npm-offline-package-guide.md
+│   ├── offline-devcontainer.md    # 离线开发环境（build-devcontainer）使用手册
 │   ├── platform-qa.md
 │   ├── platforms.md
 │   └── prompt.pip.txt
@@ -315,16 +342,20 @@ npm install --offline
 │   │   ├── .env.pip               # pip 配置
 │   │   ├── pip_download.py        # Python 包下载工具
 │   │   └── requirements.txt       # Python 依赖列表
-│   └── npm/                       # npm 相关文件与脚本
-│       ├── .env.npm               # npm 配置
-│       ├── README.template.md     # 产物 packages/README.md 的模板
-│       ├── npm_install.sh         # npm 离线安装脚本
-│       ├── npo_fetch.py           # npm 包下载工具 (Python 版本)
-│       ├── npo_fetch.sh           # npm 包下载工具 (Shell 版本)
-│       ├── npo_setup.sh           # npo 安装脚本
-│       ├── package.json           # npm 项目配置
-│       ├── package.json.j2        # jinja2 模板
-│       └── packages.txt           # npm 包列表
+│   ├── npm/                       # npm 相关文件与脚本
+│   │   ├── .env.npm               # npm 配置
+│   │   ├── README.template.md     # 产物 packages/README.md 的模板
+│   │   ├── npm_install.sh         # npm 离线安装脚本
+│   │   ├── npo_fetch.py           # npm 包下载工具 (Python 版本)
+│   │   ├── npo_fetch.sh           # npm 包下载工具 (Shell 版本)
+│   │   ├── npo_setup.sh           # npo 安装脚本
+│   │   ├── package.json           # npm 项目配置
+│   │   ├── package.json.j2        # jinja2 模板
+│   │   └── packages.txt           # npm 包列表
+│   └── devcontainer-builder/      # 离线开发环境镜像构建工具
+│       ├── main.py                # 总入口
+│       ├── lib/                   # params/render/pip/docker/package/summary
+│       └── templates/             # Dockerfile/compose/Makefile 等模板
 ├── .gitignore
 ├── README.md
 ├── clear.bat                      # Windows 清理脚本

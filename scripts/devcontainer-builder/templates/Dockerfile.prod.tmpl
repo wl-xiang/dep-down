@@ -1,0 +1,23 @@
+# 由 scripts/devcontainer-builder 生成，请勿手工编辑。
+# 平台: {{DOCKER_PLATFORM}} | Python: {{PYTHON_VERSION}} | wheel 标签: {{PIP_PLATFORM_TAG}}
+# 说明: 基础镜像固定为 slim-bookworm（glibc 2.36），glibc 参数仅控制 pip download
+#       下载 wheel 时选用的 manylinux 标签（低版本标签的 wheel 可在高版本 glibc 运行）。
+FROM --platform={{DOCKER_PLATFORM}} python:{{PYTHON_VERSION}}-slim-bookworm AS prod
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+{{APT_BLOCK}}{{CUSTOM_INSTALL_BLOCK}}
+WORKDIR /app
+
+# wheels 同时保留在镜像内，离线环境可在容器内继续安装:
+#   pip install --no-index --find-links=/wheels <pkg>
+COPY wheels/ /wheels/
+COPY requirements.txt /app/requirements.txt
+
+RUN pip install --no-index --find-links=/wheels -r /app/requirements.txt
+
+CMD {{PROD_COMMAND_JSON}}
+{{DEV_STAGE}}

@@ -1,0 +1,30 @@
+# 由 scripts/devcontainer-builder 生成，请勿手工编辑。
+# 平台: {{DOCKER_PLATFORM}} | 镜像 TAG: {{TAG}}
+
+COMPOSE := docker compose
+DEV_RUN := $(COMPOSE) --profile dev run --rm dev
+
+.DEFAULT_GOAL := help
+
+help: ## 显示所有可用目标
+	@grep -E '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-14s %s\n", $$1, $$2}'
+
+build: ## 构建镜像（需要能访问 apt/pip 源的网络环境，离线机器勿用）
+	$(COMPOSE) --profile dev build
+
+up: ## 后台启动 prod 服务（及已启用的外挂服务）
+	$(COMPOSE) up -d
+
+down: ## 停止并移除容器与网络
+	$(COMPOSE) down
+
+ps: ## 查看容器状态
+	$(COMPOSE) ps
+
+logs: ## 跟随查看日志
+	$(COMPOSE) logs -f
+
+{{DEV_TARGETS}}package-src: ## 重新打包当前源码目录为 tgz（输出到上级目录）
+	tar czf ../devcontainer-src-repack_$$(date +%Y%m%d-%H%M%S).tgz --warning=no-file-changed --exclude='*.tgz' --exclude='__pycache__' --exclude='.pytest_cache' .
+
+.PHONY: help build up down ps logs{{PHONY_DEV}}package-src
