@@ -1,0 +1,15 @@
+# ---- dev 阶段：继承 prod，追加开发/交互工具 ----
+FROM prod AS dev
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        git curl vim make \
+    && rm -rf /var/lib/apt/lists/*
+
+# dev 工具的 wheel 已随 wheels/ 一起下载，离线仍可安装
+RUN pip install --no-index --find-links=/wheels \
+        {{DEV_PIP_TOOLS}}
+
+WORKDIR /app
+
+CMD ["bash"]

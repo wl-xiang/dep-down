@@ -3,3 +3,5 @@ packages/
 node_modules/
 dist/
 tarballs/
+__pycache__/
+*.pyc

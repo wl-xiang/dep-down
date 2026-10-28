@@ -1,0 +1,172 @@
+name: Build DevContainer
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Target platform'
+        type: choice
+        required: true
+        default: 'linux-arm64'
+        options:
+          - 'linux-amd64'
+          - 'linux-arm64'
+      python_version:
+        description: 'Target Python version'
+        type: choice
+        required: true
+        default: '3.13'
+        options:
+          - '3.12'
+          - '3.13'
+      glibc_version:
+        description: 'Target glibc version (controls the manylinux tag used by pip download)'
+        type: choice
+        required: true
+        default: '2.28'
+        options:
+          - '2.17'
+          - '2.28'
+          - '2.34'
+      pip_mirror:
+        description: 'Pip index mirror'
+        type: choice
+        required: true
+        default: 'thu'
+        options:
+          - 'pypi.org'
+          - 'aliyun'
+          - 'thu'
+      pip_packages:
+        description: 'Pip packages, separated by $ (e.g. numpy$pandas$requests). Leave empty for no extra packages.'
+        type: string
+        required: false
+        default: ''
+      apt_packages:
+        description: 'APT packages, space separated (e.g. git vim curl)'
+        type: string
+        required: false
+        default: ''
+      custom_install_cmd:
+        description: 'Custom install command executed in the prod image (e.g. curl https://xxx/install.sh | bash)'
+        type: string
+        required: false
+        default: ''
+      enable_nginx:
+        description: 'Enable nginx sidecar service (8080:80)'
+        type: boolean
+        required: true
+        default: false
+      enable_postgres:
+        description: 'Enable postgres sidecar service (postgres:16)'
+        type: boolean
+        required: true
+        default: false
+      app_depends_on_nginx:
+        description: 'app service depends_on nginx (requires enable_nginx)'
+        type: boolean
+        required: true
+        default: false
+      app_depends_on_postgres:
+        description: 'app service depends_on postgres (requires enable_postgres)'
+        type: boolean
+        required: true
+        default: false
+      prod_command:
+        description: 'Command run by the prod service'
+        type: string
+        required: true
+        default: 'python main.py'
+      build_dev_image:
+        description: 'Also build the dev image (ruff/pytest/tools, inherits prod)'
+        type: boolean
+        required: true
+        default: true
+      image_prefix:
+        description: 'Image name prefix (produces <prefix>-prod:<tag> and <prefix>-dev:<tag>)'
+        type: string
+        required: true
+        default: 'devcontainer'
+      app_source_dir:
+        description: 'Source directory mounted into the container as /app (relative to the compose file)'
+        type: string
+        required: true
+        default: '.'
+
+permissions:
+  contents: read
+
+jobs:
+  build-devcontainer:
+    name: Build offline dev images
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache pip downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: devcontainer-pip-${{ inputs.platform }}-py${{ inputs.python_version }}-${{ inputs.glibc_version }}-${{ inputs.pip_packages }}
+          restore-keys: |
+            devcontainer-pip-${{ inputs.platform }}-py${{ inputs.python_version }}-${{ inputs.glibc_version }}-
+
+      - name: Set up QEMU (cross-arch builds)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and package
+        id: build
+        env:
+          PLATFORM: ${{ inputs.platform }}
+          PYTHON_VERSION: ${{ inputs.python_version }}
+          GLIBC_VERSION: ${{ inputs.glibc_version }}
+          PIP_MIRROR: ${{ inputs.pip_mirror }}
+          PIP_PACKAGES: ${{ inputs.pip_packages }}
+          APT_PACKAGES: ${{ inputs.apt_packages }}
+          CUSTOM_INSTALL_CMD: ${{ inputs.custom_install_cmd }}
+          ENABLE_NGINX: ${{ inputs.enable_nginx }}
+          ENABLE_POSTGRES: ${{ inputs.enable_postgres }}
+          APP_DEPENDS_ON_NGINX: ${{ inputs.app_depends_on_nginx }}
+          APP_DEPENDS_ON_POSTGRES: ${{ inputs.app_depends_on_postgres }}
+          PROD_COMMAND: ${{ inputs.prod_command }}
+          BUILD_DEV_IMAGE: ${{ inputs.build_dev_image }}
+          IMAGE_PREFIX: ${{ inputs.image_prefix }}
+          APP_SOURCE_DIR: ${{ inputs.app_source_dir }}
+        run: python scripts/devcontainer-builder/main.py
+
+      - name: Verify artifacts
+        run: |
+          set -euo pipefail
+          echo "--- ${{ steps.build.outputs.src_name }} (top entries) ---"
+          tar tzf "${{ steps.build.outputs.src_tgz }}" | head -30
+          if [ -n "${{ steps.build.outputs.bundle_tgz }}" ]; then
+            echo "--- ${{ steps.build.outputs.bundle_name }} ---"
+            tar tzf "${{ steps.build.outputs.bundle_tgz }}"
+          else
+            echo "bundle artifact skipped (DEVCONTAINER_SKIP_DOCKER was set)"
+          fi
+
+      - name: Upload src artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.build.outputs.src_name }}
+          path: ${{ steps.build.outputs.src_tgz }}
+          if-no-files-found: error
+
+      - name: Upload bundle artifact
+        if: ${{ steps.build.outputs.bundle_tgz != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.build.outputs.bundle_name }}
+          path: ${{ steps.build.outputs.bundle_tgz }}
+          if-no-files-found: error
