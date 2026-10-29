@@ -101,18 +101,60 @@ def _custom_install_block(cmd):
     return f"RUN {cmd}\n"
 
 
-def render_dockerfile(p):
+def _install_block(local_wheels):
+    if local_wheels:
+        return (
+            "# wheels 同时保留在镜像内，离线环境可在容器内继续安装:\n"
+            "#   pip install --no-index --find-links=/wheels <pkg>\n"
+            "COPY wheels/ /wheels/\n"
+            "COPY requirements.txt /app/requirements.txt\n"
+            "\n"
+            "RUN pip install --no-index --find-links=/wheels -r /app/requirements.txt\n"
+        )
+    return (
+        "# 发布包不含 wheels/（已装进镜像），重建时从 pip 源在线安装\n"
+        "COPY requirements.txt /app/requirements.txt\n"
+        "\n"
+        "RUN pip install -r /app/requirements.txt\n"
+    )
+
+
+def _dev_pip_block(p, local_wheels):
+    tools = " ".join(p.dev_pip_tools)
+    if local_wheels:
+        return (
+            "# dev 工具的 wheel 已随 wheels/ 一起下载，离线仍可安装\n"
+            f"RUN pip install --no-index --find-links=/wheels {tools}\n"
+        )
+    return (
+        "# 发布包不含 wheels/，重建时从 pip 源在线安装\n"
+        f"RUN pip install {tools}\n"
+    )
+
+
+def render_dockerfile(p, local_wheels=True):
     dev_stage = ""
     if p.build_dev_image:
-        dev_stage = "\n" + _sub(_load("Dockerfile.dev.tmpl"), _base_mapping(p))
+        dev_stage = "\n" + _sub(
+            _load("Dockerfile.dev.tmpl"),
+            {**_base_mapping(p), "DEV_PIP_BLOCK": _dev_pip_block(p, local_wheels)},
+        )
     return _sub(
         _load("Dockerfile.prod.tmpl"),
         {
             **_base_mapping(p),
             "APT_BLOCK": _apt_block(p.apt_package_list),
             "CUSTOM_INSTALL_BLOCK": _custom_install_block(p.custom_install_cmd),
+            "INSTALL_BLOCK": _install_block(local_wheels),
             "DEV_STAGE": dev_stage,
         },
+    )
+
+
+def render_src_dockerfile(p, staging):
+    """把 src 产物内的 Dockerfile 改写为不含 wheels/ 的联网重建版本。"""
+    (Path(staging) / "Dockerfile").write_text(
+        render_dockerfile(p, local_wheels=False), encoding="utf-8"
     )
 
 

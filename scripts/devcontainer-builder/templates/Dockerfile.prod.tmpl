@@ -12,12 +12,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 {{APT_BLOCK}}{{CUSTOM_INSTALL_BLOCK}}
 WORKDIR /app
 
-# wheels 同时保留在镜像内，离线环境可在容器内继续安装:
-#   pip install --no-index --find-links=/wheels <pkg>
-COPY wheels/ /wheels/
-COPY requirements.txt /app/requirements.txt
-
-RUN pip install --no-index --find-links=/wheels -r /app/requirements.txt
-
+{{INSTALL_BLOCK}}
 CMD {{PROD_COMMAND_JSON}}
 {{DEV_STAGE}}

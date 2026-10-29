@@ -57,8 +57,9 @@ pip install -r requirements.txt
 1. Fork 本仓库，进入 **Actions** → **Build DevContainer** → **Run workflow**。
 2. 填写参数（完整参数表见 [docs/offline-devcontainer.md](docs/offline-devcontainer.md)）。
 3. 运行完成后，在 **Summary** 底部下载两个产物：
-   - `devcontainer-src_<时间戳>.tgz`：运行时源码包（Dockerfile、docker-compose.yaml、Makefile、requirements.txt、wheels/、scripts/）
+   - `devcontainer-src_<时间戳>.tgz`：运行时源码包（Dockerfile、docker-compose.yaml、Makefile、requirements.txt、scripts/）
    - `devcontainer-bundle_<时间戳>.tgz`：镜像 Bundle 包（`docker save` 的 prod/dev/nginx/postgres 镜像）
+   > Artifacts 下载得到的是 zip 封装（已设为不压缩，仅存储），解压即得上述 `.tgz`。
 4. Summary 页同时给出构建摘要（参数、镜像清单、产物大小）与内网使用步骤。
 
 ### 内网使用

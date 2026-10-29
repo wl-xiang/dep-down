@@ -85,6 +85,10 @@ def main():
         docker_mod.save_images(images, images_tar)
 
     # 4. 打包产物
+    # wheels/ 已在镜像构建阶段装入（镜像内 /wheels），不再随 src 产物分发；
+    # 同时把 Dockerfile 改写为不含 wheels/ 的联网重建版本，避免引用不存在的目录
+    shutil.rmtree(staging / "wheels", ignore_errors=True)
+    render_mod.render_src_dockerfile(p, staging)
     package_mod.copy_repo_scripts(staging)
     src_tgz = REPO_ROOT / "dist" / f"devcontainer-src_{p.tag}.tgz"
     package_mod.make_src_tgz(staging, src_tgz)

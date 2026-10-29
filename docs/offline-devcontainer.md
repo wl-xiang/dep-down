@@ -32,6 +32,9 @@ docker pull (nginx/postgres, 按需)         解压 src → 进入项目目录
 2. 填写参数后运行。运行完成后在 **Summary** 底部 **Artifacts** 下载两个产物：
    - `devcontainer-src_<时间戳>.tgz`：运行时源码包
    - `devcontainer-bundle_<时间戳>.tgz`：镜像 Bundle 包
+
+   > Artifacts 只能是 zip 封装，工作流已设置 `compression-level: 0`（仅存储、
+   > 不再二次压缩），解压 zip 即得到唯一的 tgz 产物。
 3. Summary 页同时给出本次构建的完整摘要与内网使用步骤。
 
 ### 触发参数（Inputs）
@@ -79,10 +82,12 @@ devcontainer-src/
 ├── docker-compose.yaml     # app + dev(profile) + 外挂服务
 ├── Makefile                # up/down/shell/lint/compile/test 等
 ├── requirements.txt        # pip 包清单
-├── wheels/                 # 全部离线 wheel
 ├── scripts/                # 仓库随附的离线下载工具（pip/npm）
 └── README.md               # 快速上手说明
 ```
+
+`wheels/` 不再随源码包分发：所有 wheel 已在镜像构建阶段安装，并固化在镜像
+`/wheels` 内，内网可直接在容器中离线安装（见「prod / dev 镜像」）。
 
 应用代码默认放在该目录下（整目录挂载为容器 `/app`）。
 
@@ -121,7 +126,7 @@ make down       # 停止
 | 目标 | 说明 |
 |------|------|
 | `make help` | 列出所有目标 |
-| `make build` | `docker compose build`（**需联网**，离线机器勿用） |
+| `make build` | `docker compose build`（**需联网**：发布包不含 wheels/，deps 从 apt/pip 源安装；离线机器勿用） |
 | `make up` | 后台启动 prod 服务（及已启用的外挂服务） |
 | `make down` | 停止并移除容器与网络 |
 | `make ps` | 查看容器状态 |
@@ -161,12 +166,13 @@ make down       # 停止
 ### prod / dev 镜像
 
 - 单个 `Dockerfile` 多阶段构建：`prod` 只含运行时；`dev` 阶段 `FROM prod`
-  追加 git/curl/vim/make 与 ruff/pytest/pytest-cov（wheel 已在 wheels/ 中，
-  离线可装）。
+  追加 git/curl/vim/make 与 ruff/pytest/pytest-cov（wheel 在构建阶段随
+  `wheels/` 离线安装）。
 - 镜像使用 `CMD`（而非 `ENTRYPOINT`）承载默认命令：`make up` 时 compose 的
   `command` 直接覆盖 CMD 执行 `python main.py`；`make shell` 通过 dev 镜像的
   `CMD ["bash"]` 进入交互终端，两者互不干扰。
-- `wheels/` 会保留在镜像 `/wheels` 下，内网可在容器内继续离线安装：
+- `wheels/` 在构建时被复制到镜像 `/wheels` 并保留下来（构建上下文中的
+  `wheels/` 不会进入发布包），内网可在容器内继续离线安装：
   `pip install --no-index --find-links=/wheels <pkg>`。
 
 ### 依赖下载

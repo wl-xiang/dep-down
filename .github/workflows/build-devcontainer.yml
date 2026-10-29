@@ -159,11 +159,14 @@ jobs:
             echo "bundle artifact skipped (DEVCONTAINER_SKIP_DOCKER was set)"
           fi
 
+      # Artifacts 只能是 zip 封装：设 compression-level 0 让 zip 只做存储，
+      # 避免 tgz 再被 zip 二次压缩，解压后即得唯一的 tgz 产物
       - name: Upload src artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.build.outputs.src_name }}
           path: ${{ steps.build.outputs.src_tgz }}
+          compression-level: 0
           if-no-files-found: error
 
       - name: Upload bundle artifact
@@ -172,4 +175,5 @@ jobs:
         with:
           name: ${{ steps.build.outputs.bundle_name }}
           path: ${{ steps.build.outputs.bundle_tgz }}
+          compression-level: 0
           if-no-files-found: error
