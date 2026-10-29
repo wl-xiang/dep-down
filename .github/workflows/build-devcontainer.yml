@@ -148,7 +148,10 @@ jobs:
         run: |
           set -euo pipefail
           echo "--- ${{ steps.build.outputs.src_name }} (top entries) ---"
-          tar tzf "${{ steps.build.outputs.src_tgz }}" | head -30
+          # List to a file first: piping tar into head triggers SIGPIPE (exit 2) under pipefail
+          tar tzf "${{ steps.build.outputs.src_tgz }}" > /tmp/src_tgz.list
+          head -30 /tmp/src_tgz.list
+          echo "... $(wc -l < /tmp/src_tgz.list) entries total"
           if [ -n "${{ steps.build.outputs.bundle_tgz }}" ]; then
             echo "--- ${{ steps.build.outputs.bundle_name }} ---"
             tar tzf "${{ steps.build.outputs.bundle_tgz }}"
