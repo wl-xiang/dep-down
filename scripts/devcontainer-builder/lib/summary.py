@@ -87,7 +87,8 @@ def build_markdown(p, results):
 
     out.append("### 内网使用步骤")
     out.append("")
-    out.append("1. 从本次运行页面底部 **Artifacts** 下载两个 tgz，"
+    out.append("1. 从本次运行页面底部 **Artifacts** 下载两个产物"
+               "（zip 仅为封装、不压缩，解压即得 tgz），"
                "传输到与目标平台一致的内网机器。")
     out.append("2. 导入镜像:")
     out.append("")

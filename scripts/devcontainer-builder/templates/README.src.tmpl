@@ -38,11 +38,13 @@ make down         # 停止
 
 ## 说明
 
-- `Dockerfile` / `docker-compose.yaml` / `Makefile` / `requirements.txt` / `wheels/`
+- `Dockerfile` / `docker-compose.yaml` / `Makefile` / `requirements.txt`
   均在外网构建时生成，请勿手工修改其中的镜像名与 TAG。
+- 本包**不含 `wheels/`**：所有 wheel 已在构建镜像时安装，并固化在镜像
+  `/wheels` 内（见下一条）。
 - 源码目录默认整目录挂载为容器 `/app`（见 compose 中 app/dev 服务的 `volumes`），
   如需挂载其他目录请修改挂载路径。
 - 容器内离线安装额外依赖：`pip install --no-index --find-links=/wheels <pkg>`。
-- `make build` 需要联网（apt 源），离线机器请勿使用；镜像请统一通过 bundle 导入。
+- `make build` 需要联网（apt/pip 源），离线机器请勿使用；镜像请统一通过 bundle 导入。
 - `make help` 查看全部可用目标。
 - {{DEV_TOOLS_NOTE}}

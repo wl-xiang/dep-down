@@ -6,10 +6,7 @@ RUN apt-get update \
         git curl vim make \
     && rm -rf /var/lib/apt/lists/*
 
-# dev 工具的 wheel 已随 wheels/ 一起下载，离线仍可安装
-RUN pip install --no-index --find-links=/wheels \
-        {{DEV_PIP_TOOLS}}
-
+{{DEV_PIP_BLOCK}}
 WORKDIR /app
 
 CMD ["bash"]
