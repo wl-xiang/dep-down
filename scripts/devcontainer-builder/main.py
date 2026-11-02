@@ -6,7 +6,9 @@
     2. lib/render.py 渲染 Dockerfile / docker-compose.yaml / Makefile / requirements.txt
     3. lib/pip.py 复用 pip_download 逻辑下载 wheels/
     4. lib/docker.py buildx 构建 prod(/dev)、拉取外挂镜像、docker save
-    5. lib/package.py 打包 devcontainer-src_<ts>.tgz / devcontainer-bundle_<ts>.tgz
+    5. 产出交付物（不再打 tgz，由 workflow upload-artifact 直接封装 zip）:
+       - dist/out/<name>/            ← src 产物（zip 内即该名称文件夹）
+       - dist/build/images.tar       ← bundle 产物（zip 内即 images.tar）
     6. lib/summary.py 写 GITHUB_STEP_SUMMARY / GITHUB_OUTPUT
 
 本地联调可设置 DEVCONTAINER_SKIP_DOCKER=1 跳过 docker 步骤。
@@ -29,6 +31,10 @@ from lib import summary as summary_mod  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
+DIST_DIR = REPO_ROOT / "dist"
+BUILD_DIR = DIST_DIR / "build"   # images.tar 等构建中间产物
+OUT_DIR = DIST_DIR / "out"       # 交付目录：其内唯一子文件夹 <name>/ 即 src 产物
+
 SKIP_DOCKER_VALUES = {"1", "true", "yes"}
 
 
@@ -47,17 +53,17 @@ def main():
     print("== 参数 ==")
     print(f"  platform={p.docker_platform} python={p.python_version} "
           f"glibc={p.glibc_version} ({p.pip_platform_tag}) "
-          f"mirror={p.pip_mirror} tag={p.tag}")
+          f"mirror={p.pip_mirror} name={p.name} tag={p.tag}")
     print(f"  pip_packages={p.pip_package_list} apt_packages={p.apt_package_list} "
           f"build_dev_image={p.build_dev_image}")
     print(f"  nginx={p.enable_nginx}(depends={p.app_depends_on_nginx}) "
           f"postgres={p.enable_postgres}(depends={p.app_depends_on_postgres})")
 
-    work_dir = REPO_ROOT / "dist" / "devcontainer"
-    if work_dir.exists():
-        shutil.rmtree(work_dir)
-    staging = work_dir / "src"
-    bundle_dir = work_dir / "bundle"
+    # staging 即 src 交付目录（docker build context 复用同一目录），
+    # 构建完成、剔除 wheels/ 后，其父目录 dist/out 直接交给 upload-artifact
+    shutil.rmtree(BUILD_DIR, ignore_errors=True)
+    shutil.rmtree(OUT_DIR, ignore_errors=True)
+    staging = OUT_DIR / p.name
     staging.mkdir(parents=True)
 
     # 1. 模板渲染（requirements.txt 供下一步 pip download 使用）
@@ -80,32 +86,26 @@ def main():
             docker_mod.build_image(p, staging, "dev", p.dev_image)
         docker_mod.pull_service_images(p)
         images = docker_mod.image_list(p)
-        images_tar = bundle_dir / "images.tar"
+        images_tar = BUILD_DIR / "images.tar"
         print("== docker save ==")
         docker_mod.save_images(images, images_tar)
 
-    # 4. 打包产物
+    # 4. 整理 src 交付目录（staging 即 dist/out/<name>/）
     # wheels/ 已在镜像构建阶段装入（镜像内 /wheels），不再随 src 产物分发；
     # 同时把 Dockerfile 改写为不含 wheels/ 的联网重建版本，避免引用不存在的目录
     shutil.rmtree(staging / "wheels", ignore_errors=True)
     render_mod.render_src_dockerfile(p, staging)
     package_mod.copy_repo_scripts(staging)
-    src_tgz = REPO_ROOT / "dist" / f"devcontainer-src_{p.tag}.tgz"
-    package_mod.make_src_tgz(staging, src_tgz)
-    print(f"== src 产物: {src_tgz} "
-          f"({package_mod.human_size(src_tgz.stat().st_size)}) ==")
+    print(f"== src 产物: {staging} ({package_mod.human_size(package_mod.tree_size(staging))}) ==")
 
-    bundle_tgz = None
     if images_tar is not None:
-        bundle_tgz = REPO_ROOT / "dist" / f"devcontainer-bundle_{p.tag}.tgz"
-        package_mod.make_bundle_tgz(images_tar, bundle_tgz)
-        print(f"== bundle 产物: {bundle_tgz} "
-              f"({package_mod.human_size(bundle_tgz.stat().st_size)}) ==")
+        print(f"== bundle 产物: {images_tar} "
+              f"({package_mod.human_size(images_tar.stat().st_size)}) ==")
 
     # 5. Summary / Outputs
     results = {
-        "src_tgz": src_tgz,
-        "bundle_tgz": bundle_tgz,
+        "src_dir": staging,
+        "bundle_tar": images_tar,
         "images": images,
         "wheels_count": wheels_count,
         "skipped_docker": skip_docker,

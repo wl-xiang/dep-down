@@ -13,10 +13,10 @@ Python 环境**。
 参数解析与校验
 模板渲染 (Dockerfile/compose/Makefile)
 pip download → wheels/
-docker build (prod → dev)                  解压 bundle → docker load
-docker pull (nginx/postgres, 按需)         解压 src → 进入项目目录
-打包 src tgz + bundle tgz ──── 传输 ────→  make shell / lint / compile / test
-上传 Artifacts + 写 Summary                make up (python main.py)
+docker build (prod → dev)                  解压 bundle zip → docker load
+docker pull (nginx/postgres, 按需)         解压 src zip → 进入项目目录
+整理 dist/out/<name>/ + images.tar ──传输─→ 重写 compose command → make up
+上传 Artifacts (zip) + 写 Summary          make shell / lint / compile / test
 ```
 
 ## 使用前提
@@ -29,12 +29,10 @@ docker pull (nginx/postgres, 按需)         解压 src → 进入项目目录
 
 1. 进入 Fork 后的仓库，点击 **Actions** → 左侧选择 **Build DevContainer** →
    **Run workflow**。
-2. 填写参数后运行。运行完成后在 **Summary** 底部 **Artifacts** 下载两个产物：
-   - `devcontainer-src_<时间戳>.tgz`：运行时源码包
-   - `devcontainer-bundle_<时间戳>.tgz`：镜像 Bundle 包
-
-   > Artifacts 只能是 zip 封装，工作流已设置 `compression-level: 0`（仅存储、
-   > 不再二次压缩），解压 zip 即得到唯一的 tgz 产物。
+2. 填写参数后运行。运行完成后在 **Summary** 底部 **Artifacts** 下载两个产物
+   （GitHub artifact 本身就是 zip，解压一次即得最终内容，无 tgz 中间层）：
+   - `<name>-src_<tag>`：解压得到 `<name>/` 运行时源码目录
+   - `<name>-bundle_<tag>`：解压得到 `images.tar`（镜像 Bundle 包）
 3. Summary 页同时给出本次构建的完整摘要与内网使用步骤。
 
 ### 触发参数（Inputs）
@@ -52,13 +50,14 @@ docker pull (nginx/postgres, 按需)         解压 src → 进入项目目录
 | `enable_postgres` | boolean | — | `false` | 启用 postgres 外挂服务（postgres:16，数据卷 pgdata） |
 | `app_depends_on_nginx` | boolean | — | `false` | app 服务 `depends_on` nginx（需先启用 nginx） |
 | `app_depends_on_postgres` | boolean | — | `false` | app 服务 `depends_on` postgres（需先启用 postgres） |
-| `prod_command` | string | 命令行 | `python main.py` | prod 服务启动命令 |
 | `build_dev_image` | boolean | — | `true` | 是否同时构建 dev 镜像（ruff/pytest 等，继承 prod） |
-| `image_prefix` | string | 小写字母/数字/`._-` | `devcontainer` | 镜像名前缀（生成 `<prefix>-prod:<tag>` / `<prefix>-dev:<tag>`） |
+| `name` | string | 小写字母/数字/`._-` | 空（即 `devcontainer`） | 名称：镜像与产物的命名前缀，生成 `<name>-prod:<tag>` / `<name>-dev:<tag>` |
+| `tag` | string | 字母/数字/`._-` | `latest` | 镜像与产物的 tag |
 | `app_source_dir` | string | 相对路径 | `.` | 挂载进容器 `/app` 的源码目录（相对 compose 文件） |
 
 > **提示**：`pip_packages` 输入框无法换行，使用 `$` 分隔多个包，与
-> `pip_download.yml` 的约定一致。
+> `pip_download.yml` 的约定一致。compose 中 app 服务 `command` 默认
+> `["bash"]`（`entrypoint: []`），运行前请按需重写为实际启动命令。
 
 ### 参数校验规则
 
@@ -67,47 +66,44 @@ docker pull (nginx/postgres, 按需)         解压 src → 进入项目目录
 - `app_depends_on_nginx=true` 但 `enable_nginx=false`
 - `app_depends_on_postgres=true` 但 `enable_postgres=false`
 - `platform` / `python_version` / `glibc_version` / `pip_mirror` 不在取值范围内
-- `image_prefix` 含非法字符（仅允许小写字母/数字/`.`/`_`/`-`）
-- `prod_command` 无法解析为命令
+- `name` 含非法字符（仅允许小写字母/数字/`.`/`_`/`-`，且以字母或数字开头）
+- `tag` 不符合 docker tag 规则（字母/数字/`.`/`_`/`-`，且以字母或数字开头）
 
 ## 产物说明
 
-### devcontainer-src_<yyyymmdd-HHMMSS>.tgz
-
-解压后得到顶层目录 `devcontainer-src/`：
+### <name>-src_<tag>（artifact zip，解压得 `<name>/` 目录）
 
 ```
-devcontainer-src/
-├── Dockerfile              # 多阶段：prod（+ dev，若构建）
-├── docker-compose.yaml     # app + dev(profile) + 外挂服务
+<name>/
+├── Dockerfile              # 多阶段：prod（+ dev，若构建）；CMD ["bash"]
+├── docker-compose.yaml     # app + dev(profile) + 外挂服务；command 默认 ["bash"]
 ├── Makefile                # up/down/shell/lint/compile/test 等
 ├── requirements.txt        # pip 包清单
 ├── scripts/                # 仓库随附的离线下载工具（pip/npm）
 └── README.md               # 快速上手说明
 ```
 
-`wheels/` 不再随源码包分发：所有 wheel 已在镜像构建阶段安装，并固化在镜像
+`wheels/` 不随源码目录分发：所有 wheel 已在镜像构建阶段安装，并固化在镜像
 `/wheels` 内，内网可直接在容器中离线安装（见「prod / dev 镜像」）。
 
 应用代码默认放在该目录下（整目录挂载为容器 `/app`）。
 
-### devcontainer-bundle_<yyyymmdd-HHMMSS>.tgz
+### <name>-bundle_<tag>（artifact zip，解压得 `images.tar`）
 
-内含 `images.tar`：`docker save` 导出的镜像集合（prod、dev、nginx、postgres，
-按本次参数）。文件名时间戳与镜像 TAG 一致。
+`images.tar` 为 `docker save` 导出的镜像集合（prod、dev、nginx、postgres，
+按本次参数）。
 
 ## 内网使用步骤
 
 ```bash
-# 1. 导入镜像
-tar xzf devcontainer-bundle_20260101-120000.tgz
+# 1. 导入镜像（解压 <name>-bundle_<tag>.zip 得到 images.tar）
 docker load -i images.tar
 
-# 2. 解压运行时产物
-tar xzf devcontainer-src_20260101-120000.tgz
-cd devcontainer-src
+# 2. 进入源码目录（解压 <name>-src_<tag>.zip 得到 <name>/ 文件夹）
+cd <name>
 
-# 3. 将应用代码放入本目录（如 main.py；prod 默认命令为 python main.py）
+# 3. 将应用代码放入本目录，并编辑 docker-compose.yaml 重写 app 服务的
+#    command（默认 ["bash"]，exec 数组形式），例如 ["python", "main.py"]
 
 # 4. 开发阶段
 make shell      # 进入 dev 容器交互式 bash（含 ruff/pytest 等）
@@ -168,9 +164,9 @@ make down       # 停止
 - 单个 `Dockerfile` 多阶段构建：`prod` 只含运行时；`dev` 阶段 `FROM prod`
   追加 git/curl/vim/make 与 ruff/pytest/pytest-cov（wheel 在构建阶段随
   `wheels/` 离线安装）。
-- 镜像使用 `CMD`（而非 `ENTRYPOINT`）承载默认命令：`make up` 时 compose 的
-  `command` 直接覆盖 CMD 执行 `python main.py`；`make shell` 通过 dev 镜像的
-  `CMD ["bash"]` 进入交互终端，两者互不干扰。
+- 镜像使用 `CMD`（而非 `ENTRYPOINT`）承载默认命令，均为 `["bash"]`；生成的
+  compose 中 app 服务 `entrypoint: []`、`command: ["bash"]`（exec 数组形式）
+  并附注释提示重写，`make shell` 通过 dev 镜像的 `CMD ["bash"]` 进入交互终端。
 - `wheels/` 在构建时被复制到镜像 `/wheels` 并保留下来（构建上下文中的
   `wheels/` 不会进入发布包），内网可在容器内继续离线安装：
   `pip install --no-index --find-links=/wheels <pkg>`。
@@ -185,7 +181,8 @@ make down       # 停止
 
 **Q: 为什么内网 `make up` 报错找不到镜像 / 尝试联网构建？**
 先执行 `docker load -i images.tar` 导入镜像；`make up` 不会自动构建。若仍提示
-build，说明镜像 TAG 与 compose 中不一致，请确认使用同一时间戳的 src 与 bundle。
+build，说明镜像 name/tag 与 compose 中不一致，请确认使用同一次构建产出的
+src 与 bundle（相同的 `<name>` 与 `<tag>`）。
 
 **Q: 跨架构构建（amd64 Runner 构建 arm64 镜像）很慢？**
 arm64 构建通过 QEMU 模拟执行，速度约为原生 1/5~1/10，属正常现象；工作流已

@@ -1,8 +1,9 @@
 # devcontainer-builder
 
 离线 Python 开发环境镜像构建工具：解析参数 → 渲染模板 → pip download →
-docker 构建 → 打包 → Summary。由 `.github/workflows/build-devcontainer.yml`
-调用，也可本地运行。内网使用手册见 `docs/offline-devcontainer.md`。
+docker 构建 → 交付目录整理 → Summary。由
+`.github/workflows/build-devcontainer.yml` 调用，也可本地运行。
+内网使用手册见 `docs/offline-devcontainer.md`。
 
 ## 目录结构
 
@@ -14,7 +15,7 @@ scripts/devcontainer-builder/
 │   ├── render.py            # 模板渲染与子模板拼接（compose 服务/dev 阶段等）
 │   ├── pip.py               # pip download → wheels/（多平台标签展开）
 │   ├── docker.py            # buildx 构建、外挂镜像 pull、docker save
-│   ├── package.py           # src / bundle 两个 tgz 打包
+│   ├── package.py           # src 交付目录整理（copy scripts）、大小工具
 │   └── summary.py           # GITHUB_STEP_SUMMARY / GITHUB_OUTPUT
 └── templates/
     ├── Dockerfile.prod.tmpl       # prod 阶段（基础镜像 + APT/自定义命令 + 离线 pip install）
@@ -42,9 +43,9 @@ scripts/devcontainer-builder/
 | `ENABLE_POSTGRES` | `false` | 启用 postgres 服务 |
 | `APP_DEPENDS_ON_NGINX` | `false` | app depends_on nginx |
 | `APP_DEPENDS_ON_POSTGRES` | `false` | app depends_on postgres |
-| `PROD_COMMAND` | `python main.py` | prod 服务命令 |
 | `BUILD_DEV_IMAGE` | `true` | 是否构建 dev 镜像 |
-| `IMAGE_PREFIX` | `devcontainer` | 镜像名前缀 |
+| `NAME` | `devcontainer` | 名称（镜像与产物命名前缀），workflow 留空即用默认值 |
+| `TAG` | `latest` | 镜像与产物的 tag |
 | `APP_SOURCE_DIR` | `.` | 挂载为 /app 的源码目录 |
 | `DEVCONTAINER_SKIP_DOCKER` | 空 | 置 `1` 跳过 docker 步骤（本地联调） |
 
@@ -57,9 +58,13 @@ DEVCONTAINER_SKIP_DOCKER=1 \
 python scripts/devcontainer-builder/main.py
 ```
 
-产物输出到仓库 `dist/` 目录（已被 .gitignore 忽略）。本地运行时可设置
-`GITHUB_STEP_SUMMARY` / `GITHUB_OUTPUT` 环境变量指定输出文件，未设置时
-Summary 直接打印到终端。
+产物输出到仓库 `dist/` 目录（已被 .gitignore 忽略）：
+
+- `dist/out/<name>/`：src 交付目录（workflow 上传后 zip 内即该名称文件夹）
+- `dist/build/images.tar`：bundle 产物（docker save 输出，直接上传）
+
+本地运行时可设置 `GITHUB_STEP_SUMMARY` / `GITHUB_OUTPUT` 环境变量指定输出文件，
+未设置时 Summary 直接打印到终端。
 
 ## 与 scripts/pip/pip_download.py 的关系
 
@@ -79,12 +84,16 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
 - **多阶段 Dockerfile**：`prod`（运行时）与 `dev`（`FROM prod` + ruff/pytest
   等工具）在同文件内分阶段构建，compose 通过 `target` 区分；dev 服务挂
   `profiles: [dev]`，仅 `make shell/lint/test` 激活，不影响 `make up`。
-- **CMD 而非 ENTRYPOINT**：prod/dev 镜像默认命令均通过 `CMD` 承载，
-  `docker compose up` 时由 compose `command` 覆盖执行 `python main.py`，
-  `docker compose run dev` 时落到 dev 镜像的 `CMD ["bash"]`，互不冲突。
-- **镜像 TAG**：`<yyyymmdd-HHMMSS>`（UTC），与两个产物文件名的时间戳一致，
-  保证 compose 引用与 `docker save` 的镜像名一一对应。
+- **默认 bash，由用户重写 command**：镜像 `CMD ["bash"]`；生成的 compose 中
+  app 服务 `entrypoint: []`、`command: ["bash"]`（exec 数组形式）并附注释，
+  提示用户按需重写为实际启动命令（如 `["python", "main.py"]`）。
+- **产物为「目录 + tar」，zip 由 upload-artifact 封装**：不再自行打 tgz。
+  src 上传 `dist/out`（zip 根即 `<name>/` 名称文件夹），bundle 直接上传
+  `images.tar`，下载解压一次即得最终内容，避免 zip 套 tgz 导致的解压损坏。
+- **name / tag**：镜像为 `<name>-prod:<tag>` / `<name>-dev:<tag>`，artifact 名
+  为 `<name>-src_<tag>` / `<name>-bundle_<tag>`；`name` 留空默认 `devcontainer`，
+  `tag` 默认 `latest`。
 - **glibc 语义**：基础镜像固定 slim-bookworm（glibc 2.36），glibc 参数仅决定
   pip download 请求的 manylinux 标签集合（目标 glibc 及以下全部标签）。
-- **YAML 安全**：compose 中的 `command` 与 `volumes` 挂载路径使用
-  JSON 转义后的双引号标量注入，避免命令含 `:` / 空格时破坏 YAML 结构。
+- **YAML 安全**：compose 中的 `volumes` 挂载路径使用 JSON 转义后的双引号标量
+  注入，避免路径含特殊字符时破坏 YAML 结构。

@@ -3,7 +3,7 @@
 import os
 from pathlib import Path
 
-from .package import human_size
+from .package import human_size, tree_size
 from .params import Params
 
 
@@ -15,8 +15,8 @@ def build_markdown(p, results):
     """按计划书 4.7 生成 Summary markdown。"""
     wheels_count = results.get("wheels_count", 0)
     images = results.get("images") or [p.prod_image]
-    src_tgz = results.get("src_tgz")
-    bundle_tgz = results.get("bundle_tgz")
+    src_dir = results.get("src_dir")
+    bundle_tar = results.get("bundle_tar")
     skipped_docker = results.get("skipped_docker", False)
 
     out = []
@@ -24,7 +24,8 @@ def build_markdown(p, results):
     out.append("")
     out.append("| 项目 | 值 |")
     out.append("| --- | --- |")
-    out.append(f"| 时间戳 (TAG) | `{p.tag}` |")
+    out.append(f"| 名称 (NAME) | `{p.name}` |")
+    out.append(f"| TAG | `{p.tag}` |")
     out.append(f"| 目标平台 | `{p.docker_platform}` |")
     out.append(f"| Python 版本 | `{p.python_version}` |")
     out.append(f"| glibc (wheel 标签) | `{p.glibc_version}` → `{p.pip_platform_tag}` |")
@@ -77,35 +78,35 @@ def build_markdown(p, results):
 
     out.append("### 产物清单")
     out.append("")
-    out.append("| 文件 | 大小 |")
-    out.append("| --- | --- |")
-    if src_tgz:
-        out.append(f"| {src_tgz.name} | {human_size(src_tgz.stat().st_size)} |")
-    if bundle_tgz:
-        out.append(f"| {bundle_tgz.name} | {human_size(bundle_tgz.stat().st_size)} |")
+    out.append("| Artifact（下载后为 zip） | 内容 | 大小 |")
+    out.append("| --- | --- | --- |")
+    if src_dir:
+        out.append(f"| `{p.src_artifact_name}` | 解压得 `{p.name}/` 源码目录 | "
+                   f"{human_size(tree_size(src_dir))} |")
+    if bundle_tar:
+        out.append(f"| `{p.bundle_artifact_name}` | 解压得 `images.tar`（docker save） | "
+                   f"{human_size(Path(bundle_tar).stat().st_size)} |")
     out.append("")
 
     out.append("### 内网使用步骤")
     out.append("")
     out.append("1. 从本次运行页面底部 **Artifacts** 下载两个产物"
-               "（zip 仅为封装、不压缩，解压即得 tgz），"
-               "传输到与目标平台一致的内网机器。")
-    out.append("2. 导入镜像:")
+               "（GitHub artifact 本身就是 zip），传输到与目标平台一致的内网机器。")
+    out.append("2. 解压 `bundle` zip 得到 `images.tar`，导入镜像:")
     out.append("")
     out.append("```bash")
-    out.append(f"tar xzf devcontainer-bundle_{p.tag}.tgz")
     out.append("docker load -i images.tar")
     out.append("```")
     out.append("")
-    out.append("3. 解压源码包并进入目录:")
+    out.append("3. 解压 `src` zip 得到文件夹并进入目录:")
     out.append("")
     out.append("```bash")
-    out.append(f"tar xzf devcontainer-src_{p.tag}.tgz")
-    out.append("cd devcontainer-src")
+    out.append(f"cd {p.name}")
     out.append("```")
     out.append("")
-    out.append(f"4. 将应用代码放入该目录（prod 命令为 `{p.prod_command}`，"
-               "如需调整请修改 `docker-compose.yaml` 中 app 服务的 `command`）。")
+    out.append(f"4. 将应用代码放入该目录，并编辑 `docker-compose.yaml` 重写 app 服务的 "
+               f"`command`（默认 `['bash']`，exec 数组形式），"
+               f"例如 `command: [\"python\", \"main.py\"]`。")
     out.append("")
     if p.build_dev_image:
         out.append("5. 开发调试:")
@@ -154,15 +155,16 @@ def emit(p, results):
 
     output_path = os.environ.get("GITHUB_OUTPUT")
     if output_path:
-        entries = [("tag", p.tag)]
-        src_tgz = results.get("src_tgz")
-        bundle_tgz = results.get("bundle_tgz")
-        if src_tgz:
-            entries.append(("src_tgz", str(src_tgz)))
-            entries.append(("src_name", src_tgz.name))
-        if bundle_tgz:
-            entries.append(("bundle_tgz", str(bundle_tgz)))
-            entries.append(("bundle_name", bundle_tgz.name))
+        entries = [
+            ("name", p.name),
+            ("tag", p.tag),
+            ("src_name", p.src_artifact_name),
+            ("src_dir", str(results["src_dir"])),
+        ]
+        bundle_tar = results.get("bundle_tar")
+        if bundle_tar:
+            entries.append(("bundle_name", p.bundle_artifact_name))
+            entries.append(("bundle_tar", str(bundle_tar)))
         entries.append(("images", ",".join(results.get("images") or [])))
         with open(output_path, "a", encoding="utf-8") as f:
             for key, value in entries:

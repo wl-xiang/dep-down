@@ -4,12 +4,9 @@
 （大写 + 下划线）。优先级：环境变量 > 默认值。
 """
 
-import json
 import os
 import re
-import shlex
 from dataclasses import dataclass
-from datetime import datetime, timezone
 
 # workflow platform 选项 → Docker --platform
 PLATFORM_MAP = {
@@ -42,7 +39,11 @@ PIP_MIRRORS = {
 # dev 镜像额外安装的工具（wheel 会随 wheels/ 一起下载）
 DEV_PIP_TOOLS = ("ruff", "pytest", "pytest-cov")
 
-IMAGE_PREFIX_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+# 名称（镜像名与产物名前缀）：仅允许小写字母/数字/./_/-，且以字母或数字开头
+NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+
+# docker tag 规则：^[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}$
+TAG_RE = re.compile(r"^[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}$")
 
 BOOL_TRUE = {"1", "true", "yes", "on"}
 
@@ -78,11 +79,10 @@ class Params:
     enable_postgres: bool
     app_depends_on_nginx: bool
     app_depends_on_postgres: bool
-    prod_command: str
     build_dev_image: bool
-    image_prefix: str
-    app_source_dir: str
+    name: str
     tag: str
+    app_source_dir: str
 
     # ---------- 派生值 ----------
 
@@ -125,19 +125,19 @@ class Params:
 
     @property
     def prod_image(self):
-        return f"{self.image_prefix}-prod:{self.tag}"
+        return f"{self.name}-prod:{self.tag}"
 
     @property
     def dev_image(self):
-        return f"{self.image_prefix}-dev:{self.tag}"
+        return f"{self.name}-dev:{self.tag}"
 
     @property
-    def prod_command_args(self):
-        return shlex.split(self.prod_command)
+    def src_artifact_name(self):
+        return f"{self.name}-src_{self.tag}"
 
     @property
-    def prod_command_json(self):
-        return json.dumps(self.prod_command_args)
+    def bundle_artifact_name(self):
+        return f"{self.name}-bundle_{self.tag}"
 
 
 def load():
@@ -154,11 +154,10 @@ def load():
         enable_postgres=_env_bool("ENABLE_POSTGRES", False),
         app_depends_on_nginx=_env_bool("APP_DEPENDS_ON_NGINX", False),
         app_depends_on_postgres=_env_bool("APP_DEPENDS_ON_POSTGRES", False),
-        prod_command=_env("PROD_COMMAND", "python main.py"),
         build_dev_image=_env_bool("BUILD_DEV_IMAGE", True),
-        image_prefix=_env("IMAGE_PREFIX", "devcontainer"),
+        name=_env("NAME", "devcontainer"),
+        tag=_env("TAG", "latest"),
         app_source_dir=_env("APP_SOURCE_DIR", "."),
-        tag=datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S"),
     )
     return validate(params)
 
@@ -188,13 +187,14 @@ def validate(p):
         raise ParamError(
             "app_depends_on_postgres=true 需要同时设置 enable_postgres=true"
         )
-    if not IMAGE_PREFIX_RE.match(p.image_prefix):
+    if not NAME_RE.match(p.name):
         raise ParamError(
-            f"image_prefix 非法（仅允许小写字母/数字/./_/-，且以字母或数字开头）: "
-            f"{p.image_prefix!r}"
+            f"name 非法（仅允许小写字母/数字/./_/-，且以字母或数字开头）: {p.name!r}"
         )
-    if not p.prod_command_args:
-        raise ParamError(f"prod_command 无法解析为命令: {p.prod_command!r}")
+    if not TAG_RE.match(p.tag):
+        raise ParamError(
+            f"tag 非法（仅允许字母/数字/./_/-，且以字母或数字开头）: {p.tag!r}"
+        )
     if not p.app_source_dir.strip():
         raise ParamError("app_source_dir 不能为空")
 

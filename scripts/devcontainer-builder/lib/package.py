@@ -1,7 +1,11 @@
-"""src / bundle 两个 tgz 产物的打包。"""
+"""产物整理：src 交付目录（供 upload-artifact 直接封装为 zip）与大小工具。
+
+src 产物不再打 tgz：交付目录 dist/out/<name>/ 由 workflow 的
+upload-artifact 上传（其父目录为 zip 根），下载解压即得 <name>/ 文件夹。
+bundle 产物为 dist/build/images.tar（docker save 输出），同样直接上传。
+"""
 
 import shutil
-import tarfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -16,6 +20,21 @@ def human_size(num_bytes):
     return f"{num_bytes:.1f} GB"
 
 
+def tree_size(path):
+    """目录内所有文件的字节总大小。"""
+    path = Path(path)
+    if path.is_file():
+        return path.stat().st_size
+    total = 0
+    for f in path.rglob("*"):
+        if f.is_file():
+            try:
+                total += f.stat().st_size
+            except OSError:
+                pass
+    return total
+
+
 def copy_repo_scripts(staging):
     """把仓库 scripts/ 一并放进 src 产物（内网可复用的下载工具）。"""
     src = REPO_ROOT / "scripts"
@@ -23,18 +42,3 @@ def copy_repo_scripts(staging):
     if dst.exists():
         shutil.rmtree(dst)
     shutil.copytree(src, dst, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-
-
-def make_src_tgz(staging, out_file):
-    """打包运行时源码产物，顶层目录为 devcontainer-src/。"""
-    with tarfile.open(out_file, "w:gz") as tar:
-        tar.add(staging, arcname="devcontainer-src")
-    return out_file
-
-
-def make_bundle_tgz(images_tar, out_file):
-    """打包镜像 Bundle 产物（内含 docker save 的 images.tar）。"""
-    images_tar = Path(images_tar)
-    with tarfile.open(out_file, "w:gz") as tar:
-        tar.add(images_tar, arcname=images_tar.name)
-    return out_file

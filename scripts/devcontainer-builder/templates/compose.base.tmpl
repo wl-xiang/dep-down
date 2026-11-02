@@ -2,15 +2,17 @@
 # 平台: {{DOCKER_PLATFORM}} | 镜像 TAG: {{TAG}}
 services:
   app:
-    image: {{IMAGE_PREFIX}}-prod:{{TAG}}
+    image: {{NAME}}-prod:{{TAG}}
     build:
       context: .
       dockerfile: Dockerfile
       target: prod
     working_dir: /app
-    volumes:
-      - {{APP_VOLUME}}
-    command: {{PROD_COMMAND_YAML}}
+    # 置空镜像 entrypoint，启动行为完全由下方 command 决定
+    entrypoint: []
+    # 默认 command 为 bash（exec 数组形式），请按需重写为你的启动命令，
+    # 例如 ["python", "main.py"]
+    command: ["bash"]
 {{DEPENDS_ON_BLOCK}}{{DEV_SERVICE_BLOCK}}{{SERVICE_BLOCKS}}
 networks:
   app-net: {}

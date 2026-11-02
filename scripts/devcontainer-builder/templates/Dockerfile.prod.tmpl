@@ -13,5 +13,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 {{INSTALL_BLOCK}}
-CMD {{PROD_COMMAND_JSON}}
+# 默认命令 bash（exec 数组形式）；运行时请通过 docker-compose.yaml
+# 中 app 服务的 command 重写为实际启动命令
+CMD ["bash"]
 {{DEV_STAGE}}

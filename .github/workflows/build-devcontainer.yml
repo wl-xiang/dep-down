@@ -52,6 +52,16 @@ on:
         type: string
         required: false
         default: ''
+      name:
+        description: '名称：镜像与产物的命名前缀，留空默认 devcontainer'
+        type: string
+        required: false
+        default: ''
+      tag:
+        description: '镜像与产物的 tag'
+        type: string
+        required: false
+        default: 'latest'
       enable_nginx:
         description: 'Enable nginx sidecar service (8080:80)'
         type: boolean
@@ -72,21 +82,11 @@ on:
         type: boolean
         required: true
         default: false
-      prod_command:
-        description: 'Command run by the prod service'
-        type: string
-        required: true
-        default: 'python main.py'
       build_dev_image:
         description: 'Also build the dev image (ruff/pytest/tools, inherits prod)'
         type: boolean
         required: true
         default: true
-      image_prefix:
-        description: 'Image name prefix (produces <prefix>-prod:<tag> and <prefix>-dev:<tag>)'
-        type: string
-        required: true
-        default: 'devcontainer'
       app_source_dir:
         description: 'Source directory mounted into the container as /app (relative to the compose file)'
         type: string
@@ -138,42 +138,45 @@ jobs:
           ENABLE_POSTGRES: ${{ inputs.enable_postgres }}
           APP_DEPENDS_ON_NGINX: ${{ inputs.app_depends_on_nginx }}
           APP_DEPENDS_ON_POSTGRES: ${{ inputs.app_depends_on_postgres }}
-          PROD_COMMAND: ${{ inputs.prod_command }}
           BUILD_DEV_IMAGE: ${{ inputs.build_dev_image }}
-          IMAGE_PREFIX: ${{ inputs.image_prefix }}
+          NAME: ${{ inputs.name }}
+          TAG: ${{ inputs.tag }}
           APP_SOURCE_DIR: ${{ inputs.app_source_dir }}
         run: python scripts/devcontainer-builder/main.py
 
       - name: Verify artifacts
         run: |
           set -euo pipefail
-          echo "--- ${{ steps.build.outputs.src_name }} (top entries) ---"
-          # List to a file first: piping tar into head triggers SIGPIPE (exit 2) under pipefail
-          tar tzf "${{ steps.build.outputs.src_tgz }}" > /tmp/src_tgz.list
-          head -30 /tmp/src_tgz.list
-          echo "... $(wc -l < /tmp/src_tgz.list) entries total"
-          if [ -n "${{ steps.build.outputs.bundle_tgz }}" ]; then
-            echo "--- ${{ steps.build.outputs.bundle_name }} ---"
-            tar tzf "${{ steps.build.outputs.bundle_tgz }}"
+          echo "--- ${{ steps.build.outputs.src_name }}: artifact zip 将包含的文件夹 ---"
+          find "${{ steps.build.outputs.src_dir }}" -mindepth 1 -maxdepth 1
+          echo "--- src 目录文件清单 ---"
+          (cd "${{ steps.build.outputs.src_dir }}" && find . -type f | sort)
+          if [ -n "${{ steps.build.outputs.bundle_tar }}" ]; then
+            echo "--- ${{ steps.build.outputs.bundle_name }}: images.tar 校验 ---"
+            ls -lh "${{ steps.build.outputs.bundle_tar }}"
+            # List to a file first: piping tar into head triggers SIGPIPE (exit 2) under pipefail
+            tar tf "${{ steps.build.outputs.bundle_tar }}" > /tmp/images_tar.list
+            head -20 /tmp/images_tar.list
+            echo "... $(wc -l < /tmp/images_tar.list) entries total"
           else
             echo "bundle artifact skipped (DEVCONTAINER_SKIP_DOCKER was set)"
           fi
 
-      # Artifacts 只能是 zip 封装：设 compression-level 0 让 zip 只做存储，
-      # 避免 tgz 再被 zip 二次压缩，解压后即得唯一的 tgz 产物
+      # GitHub artifact 本身就是 zip：
+      # - src 上传 dist/out（其内唯一子文件夹即 <name>/），下载解压即得名称文件夹
+      # - bundle 直接上传 images.tar，下载解压即得 images.tar（不再套 tgz 中间层）
       - name: Upload src artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.build.outputs.src_name }}
-          path: ${{ steps.build.outputs.src_tgz }}
-          compression-level: 0
+          path: ${{ steps.build.outputs.src_dir }}
           if-no-files-found: error
 
       - name: Upload bundle artifact
-        if: ${{ steps.build.outputs.bundle_tgz != '' }}
+        if: ${{ steps.build.outputs.bundle_tar != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.build.outputs.bundle_name }}
-          path: ${{ steps.build.outputs.bundle_tgz }}
+          path: ${{ steps.build.outputs.bundle_tar }}
           compression-level: 0
           if-no-files-found: error

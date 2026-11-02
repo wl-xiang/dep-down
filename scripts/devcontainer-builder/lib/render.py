@@ -15,7 +15,7 @@ TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 # compose 中的 dev 服务（profile=dev，仅 make shell/lint/compile/test 时激活）
 _DEV_SERVICE_TMPL = """\
   dev:
-    image: {{IMAGE_PREFIX}}-dev:{{TAG}}
+    image: {{NAME}}-dev:{{TAG}}
     build:
       context: .
       dockerfile: Dockerfile
@@ -64,6 +64,7 @@ def _sub(text, mapping):
 def _base_mapping(p):
     return {
         "TAG": p.tag,
+        "NAME": p.name,
         "PLATFORM": p.platform,
         "DOCKER_PLATFORM": p.docker_platform,
         "PYTHON_VERSION": p.python_version,
@@ -72,13 +73,8 @@ def _base_mapping(p):
         "PIP_PLATFORM_TAG": p.pip_platform_tag,
         "PIP_MIRROR": p.pip_mirror,
         "MIRROR_URL": p.mirror_url,
-        "IMAGE_PREFIX": p.image_prefix,
         "APP_SOURCE_DIR": p.app_source_dir,
         "APP_VOLUME": json.dumps(f"{p.app_source_dir}:/app"),
-        "PROD_COMMAND": p.prod_command,
-        # YAML 双引号标量（json.dumps 的转义规则与 YAML 兼容）
-        "PROD_COMMAND_YAML": json.dumps(p.prod_command),
-        "PROD_COMMAND_JSON": p.prod_command_json,
         "PIP_PACKAGES_LINES": "\n".join(p.pip_package_list),
         "DEV_PIP_TOOLS": " ".join(p.dev_pip_tools),
     }

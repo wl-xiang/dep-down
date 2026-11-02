@@ -1,14 +1,14 @@
-# 离线 Python 开发环境（devcontainer-src）
+# 离线 Python 开发环境（{{NAME}}）
 
 本目录由 GitHub Action `build-devcontainer` 生成，需配合镜像包
-`devcontainer-bundle_{{TAG}}.tgz` 在内网离线使用。
+`{{NAME}}-bundle_{{TAG}}`（artifact zip 内含 images.tar）在内网离线使用。
 
 | 项目 | 值 |
 | --- | --- |
 | 平台 | {{DOCKER_PLATFORM}} |
 | Python | {{PYTHON_VERSION}} |
 | 镜像 TAG | `{{TAG}}` |
-| 镜像 | `{{IMAGE_PREFIX}}-prod` / `{{IMAGE_PREFIX}}-dev` |
+| 镜像 | `{{NAME}}-prod` / `{{NAME}}-dev` |
 | 外挂服务 | {{SERVICES_SUMMARY}} |
 | pip 镜像源 | {{PIP_MIRROR}} |
 
@@ -17,13 +17,14 @@
 前置要求：Docker >= 20.10，且带 compose v2 插件（`docker compose version` 可执行）。
 
 ```bash
-# 1. 导入镜像（在 bundle 包解压出的 images.tar 上执行）
+# 1. 导入镜像（解压 <name>-bundle_<tag> artifact zip 得到 images.tar）
 docker load -i images.tar
 
-# 2. 进入本目录
-cd devcontainer-src
+# 2. 进入本目录（解压 <name>-src_<tag> artifact zip 即得到本目录）
+cd {{NAME}}
 
-# 3. 将应用代码放入本目录（默认 prod 命令: {{PROD_COMMAND}}）
+# 3. 将应用代码放入本目录，并编辑 docker-compose.yaml 重写 app 服务的
+#    command（默认 ["bash"]，exec 数组形式），例如 ["python", "main.py"]
 
 # 4. 开发
 make shell        # 交互式 bash
@@ -40,6 +41,8 @@ make down         # 停止
 
 - `Dockerfile` / `docker-compose.yaml` / `Makefile` / `requirements.txt`
   均在外网构建时生成，请勿手工修改其中的镜像名与 TAG。
+- compose 中 app 服务 `entrypoint` 已置空（`[]`），`command` 默认
+  `["bash"]`（exec 数组形式），运行前请按需重写为实际启动命令。
 - 本包**不含 `wheels/`**：所有 wheel 已在构建镜像时安装，并固化在镜像
   `/wheels` 内（见下一条）。
 - 源码目录默认整目录挂载为容器 `/app`（见 compose 中 app/dev 服务的 `volumes`），

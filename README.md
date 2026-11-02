@@ -56,20 +56,22 @@ pip install -r requirements.txt
 
 1. Fork 本仓库，进入 **Actions** → **Build DevContainer** → **Run workflow**。
 2. 填写参数（完整参数表见 [docs/offline-devcontainer.md](docs/offline-devcontainer.md)）。
-3. 运行完成后，在 **Summary** 底部下载两个产物：
-   - `devcontainer-src_<时间戳>.tgz`：运行时源码包（Dockerfile、docker-compose.yaml、Makefile、requirements.txt、scripts/）
-   - `devcontainer-bundle_<时间戳>.tgz`：镜像 Bundle 包（`docker save` 的 prod/dev/nginx/postgres 镜像）
-   > Artifacts 下载得到的是 zip 封装（已设为不压缩，仅存储），解压即得上述 `.tgz`。
+3. 运行完成后，在 **Summary** 底部下载两个产物（GitHub artifact 本身就是 zip，解压一次即得最终内容，无 tgz 中间层）：
+   - `<name>-src_<tag>`：解压得到 `<name>/` 运行时源码目录（Dockerfile、docker-compose.yaml、Makefile、requirements.txt、scripts/）
+   - `<name>-bundle_<tag>`：解压得到 `images.tar`（`docker save` 的 prod/dev/nginx/postgres 镜像）
 4. Summary 页同时给出构建摘要（参数、镜像清单、产物大小）与内网使用步骤。
 
 ### 内网使用
 
 ```bash
-tar xzf devcontainer-bundle_<ts>.tgz && docker load -i images.tar
-tar xzf devcontainer-src_<ts>.tgz && cd devcontainer-src
+# 解压 <name>-bundle_<tag>.zip 与 <name>-src_<tag>.zip 后：
+docker load -i images.tar
+cd <name>
+# 编辑 docker-compose.yaml 重写 app 服务的 command（默认 ["bash"]，entrypoint 已置空），
+# 例如 command: ["python", "main.py"]
 make shell      # dev 容器交互 bash（ruff/pytest 已内置）
 make lint && make compile && make test
-make up         # docker compose up -d 运行 python main.py
+make up         # docker compose up -d
 ```
 
 > 参数校验（如依赖未启用的外挂服务）、多平台/多 glibc 组合、镜像命名与产物规范等说明详见 [docs/offline-devcontainer.md](docs/offline-devcontainer.md)。
