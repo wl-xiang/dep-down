@@ -13,7 +13,7 @@ Python 环境**。
 参数解析与校验
 模板渲染 (Dockerfile/compose/Makefile)
 pip download → wheels/
-docker build (prod → dev)                  解压 bundle → docker load
+docker build (prod → dev)                  docker load bundle tgz
 docker pull (nginx/postgres, 按需)         解压 src → 进入项目目录
 打包 src tgz + bundle tgz ──── 传输 ────→  make shell / lint / compile / test
 上传 Artifacts + 写 Summary                make up (python main.py)
@@ -93,15 +93,15 @@ devcontainer-src/
 
 ### devcontainer-bundle_<yyyymmdd-HHMMSS>.tgz
 
-内含 `images.tar`：`docker save` 导出的镜像集合（prod、dev、nginx、postgres，
-按本次参数）。文件名时间戳与镜像 TAG 一致。
+该文件是 `docker save` 输出经 gzip 压缩得到的镜像归档（prod、dev、nginx、postgres，
+按本次参数），可直接 `docker load -i` 导入，无需再解一层 tar。文件名时间戳与镜像
+TAG 一致。
 
 ## 内网使用步骤
 
 ```bash
-# 1. 导入镜像
-tar xzf devcontainer-bundle_20260101-120000.tgz
-docker load -i images.tar
+# 1. 导入镜像（Artifact 的 zip 解压后得到 tgz，可直接 load）
+docker load -i devcontainer-bundle_20260101-120000.tgz
 
 # 2. 解压运行时产物
 tar xzf devcontainer-src_20260101-120000.tgz
@@ -184,7 +184,7 @@ make down       # 停止
 ## FAQ
 
 **Q: 为什么内网 `make up` 报错找不到镜像 / 尝试联网构建？**
-先执行 `docker load -i images.tar` 导入镜像；`make up` 不会自动构建。若仍提示
+先执行 `docker load -i devcontainer-bundle_<时间戳>.tgz` 导入镜像；`make up` 不会自动构建。若仍提示
 build，说明镜像 TAG 与 compose 中不一致，请确认使用同一时间戳的 src 与 bundle。
 
 **Q: 跨架构构建（amd64 Runner 构建 arm64 镜像）很慢？**

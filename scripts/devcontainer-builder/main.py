@@ -5,8 +5,8 @@
     1. 读取环境变量 → lib/params.py 解析与校验
     2. lib/render.py 渲染 Dockerfile / docker-compose.yaml / Makefile / requirements.txt
     3. lib/pip.py 复用 pip_download 逻辑下载 wheels/
-    4. lib/docker.py buildx 构建 prod(/dev)、拉取外挂镜像、docker save
-    5. lib/package.py 打包 devcontainer-src_<ts>.tgz / devcontainer-bundle_<ts>.tgz
+    4. lib/docker.py buildx 构建 prod(/dev)、拉取外挂镜像、docker save 直出 gzip
+    5. lib/package.py 打包 devcontainer-src_<ts>.tgz；bundle 已在上一步直出
     6. lib/summary.py 写 GITHUB_STEP_SUMMARY / GITHUB_OUTPUT
 
 本地联调可设置 DEVCONTAINER_SKIP_DOCKER=1 跳过 docker 步骤。
@@ -57,7 +57,6 @@ def main():
     if work_dir.exists():
         shutil.rmtree(work_dir)
     staging = work_dir / "src"
-    bundle_dir = work_dir / "bundle"
     staging.mkdir(parents=True)
 
     # 1. 模板渲染（requirements.txt 供下一步 pip download 使用）
@@ -69,7 +68,7 @@ def main():
     # 3. docker 构建 / 拉取 / 导出
     skip_docker = os.environ.get("DEVCONTAINER_SKIP_DOCKER", "").strip().lower() in SKIP_DOCKER_VALUES
     images = []
-    images_tar = None
+    bundle_tgz = None
     if skip_docker:
         print("== DEVCONTAINER_SKIP_DOCKER=1，跳过 docker 构建/保存（本地联调用）==")
     else:
@@ -80,9 +79,9 @@ def main():
             docker_mod.build_image(p, staging, "dev", p.dev_image)
         docker_mod.pull_service_images(p)
         images = docker_mod.image_list(p)
-        images_tar = bundle_dir / "images.tar"
-        print("== docker save ==")
-        docker_mod.save_images(images, images_tar)
+        bundle_tgz = REPO_ROOT / "dist" / f"devcontainer-bundle_{p.tag}.tgz"
+        print("== docker save (gzip) ==")
+        docker_mod.save_images(images, bundle_tgz)
 
     # 4. 打包产物
     # wheels/ 已在镜像构建阶段装入（镜像内 /wheels），不再随 src 产物分发；
@@ -95,10 +94,7 @@ def main():
     print(f"== src 产物: {src_tgz} "
           f"({package_mod.human_size(src_tgz.stat().st_size)}) ==")
 
-    bundle_tgz = None
-    if images_tar is not None:
-        bundle_tgz = REPO_ROOT / "dist" / f"devcontainer-bundle_{p.tag}.tgz"
-        package_mod.make_bundle_tgz(images_tar, bundle_tgz)
+    if bundle_tgz is not None:
         print(f"== bundle 产物: {bundle_tgz} "
               f"({package_mod.human_size(bundle_tgz.stat().st_size)}) ==")
 

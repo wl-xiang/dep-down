@@ -17,8 +17,8 @@
 前置要求：Docker >= 20.10，且带 compose v2 插件（`docker compose version` 可执行）。
 
 ```bash
-# 1. 导入镜像（在 bundle 包解压出的 images.tar 上执行）
-docker load -i images.tar
+# 1. 导入镜像（Artifact 的 zip 解压后得到 tgz，可直接 load）
+docker load -i devcontainer-bundle_{{TAG}}.tgz
 
 # 2. 进入本目录
 cd devcontainer-src

@@ -90,11 +90,10 @@ def build_markdown(p, results):
     out.append("1. 从本次运行页面底部 **Artifacts** 下载两个产物"
                "（zip 仅为封装、不压缩，解压即得 tgz），"
                "传输到与目标平台一致的内网机器。")
-    out.append("2. 导入镜像:")
+    out.append("2. 导入镜像（tgz 是 gzip 压缩的镜像归档，可直接 load）:")
     out.append("")
     out.append("```bash")
-    out.append(f"tar xzf devcontainer-bundle_{p.tag}.tgz")
-    out.append("docker load -i images.tar")
+    out.append(f"docker load -i devcontainer-bundle_{p.tag}.tgz")
     out.append("```")
     out.append("")
     out.append("3. 解压源码包并进入目录:")

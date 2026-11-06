@@ -13,8 +13,8 @@ scripts/devcontainer-builder/
 │   ├── params.py            # 输入解析、规范化、校验、glibc→manylinux 映射
 │   ├── render.py            # 模板渲染与子模板拼接（compose 服务/dev 阶段等）
 │   ├── pip.py               # pip download → wheels/（多平台标签展开）
-│   ├── docker.py            # buildx 构建、外挂镜像 pull、docker save
-│   ├── package.py           # src / bundle 两个 tgz 打包
+│   ├── docker.py            # buildx 构建、外挂镜像 pull、docker save 直出 gzip
+│   ├── package.py           # src tgz 打包
 │   └── summary.py           # GITHUB_STEP_SUMMARY / GITHUB_OUTPUT
 └── templates/
     ├── Dockerfile.prod.tmpl       # prod 阶段（基础镜像 + APT/自定义命令 + 离线 pip install）
