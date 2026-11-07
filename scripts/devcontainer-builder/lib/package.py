@@ -1,4 +1,4 @@
-"""src / bundle 两个 tgz 产物的打包。"""
+"""src tgz 产物的打包（bundle 由 lib/docker.py 直出 gzip）。"""
 
 import shutil
 import tarfile
@@ -29,12 +29,4 @@ def make_src_tgz(staging, out_file):
     """打包运行时源码产物，顶层目录为 devcontainer-src/。"""
     with tarfile.open(out_file, "w:gz") as tar:
         tar.add(staging, arcname="devcontainer-src")
-    return out_file
-
-
-def make_bundle_tgz(images_tar, out_file):
-    """打包镜像 Bundle 产物（内含 docker save 的 images.tar）。"""
-    images_tar = Path(images_tar)
-    with tarfile.open(out_file, "w:gz") as tar:
-        tar.add(images_tar, arcname=images_tar.name)
     return out_file

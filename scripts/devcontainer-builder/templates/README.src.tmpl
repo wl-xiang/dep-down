@@ -14,24 +14,31 @@
 
 ## 首次使用（内网机器）
 
-前置要求：Docker >= 20.10，且带 compose v2 插件（`docker compose version` 可执行）。
+前置要求：Docker >= 20.10（建议 23+），带 compose v2 插件（`docker compose version` 可执行），
+CPU 架构与上表平台一致。
+
+本目录内容建议复制到应用根目录，与业务代码同目录后即可直接使用下面的 Makefile：
 
 ```bash
-# 1. 导入镜像（在 bundle 包解压出的 images.tar 上执行）
-docker load -i images.tar
+tar xzf devcontainer-src_{{TAG}}.tgz -C ~/apps/myapp1 \
+    --strip-components=1 --skip-old-files   # 不覆盖已有业务文件
+cd ~/apps/myapp1
+```
 
-# 2. 进入本目录
-cd devcontainer-src
+```bash
+# 1. 导入镜像（Artifact 的 zip 解压后得到 tgz，可直接 load）
+docker load -i devcontainer-bundle_{{TAG}}.tgz
 
-# 3. 将应用代码放入本目录（默认 prod 命令: {{PROD_COMMAND}}）
+# 2. 离线自检（镜像是否已导入、架构是否匹配）
+make check
 
-# 4. 开发
+# 3. 开发
 make shell        # 交互式 bash
 make lint         # ruff check .
 make compile      # python -m compileall -q .
 make test         # pytest -q
 
-# 5. 运行
+# 4. 运行（--no-build，不联网）
 make up && make logs
 make down         # 停止
 ```
@@ -40,11 +47,17 @@ make down         # 停止
 
 - `Dockerfile` / `docker-compose.yaml` / `Makefile` / `requirements.txt`
   均在外网构建时生成，请勿手工修改其中的镜像名与 TAG。
+- 复制到应用根目录时若有同名文件（如业务自带的 `requirements.txt` / `README.md`），
+  `cp -rn` 会保留业务文件；生成的同名文件不会覆盖它们。
 - 本包**不含 `wheels/`**：所有 wheel 已在构建镜像时安装，并固化在镜像
   `/wheels` 内（见下一条）。
 - 源码目录默认整目录挂载为容器 `/app`（见 compose 中 app/dev 服务的 `volumes`），
   如需挂载其他目录请修改挂载路径。
-- 容器内离线安装额外依赖：`pip install --no-index --find-links=/wheels <pkg>`。
+- 容器内离线安装额外依赖：`pip install --no-index --find-links=/wheels <pkg>`
+  （需要 root，即不设置 `HOST_UID`/`HOST_GID`）。
+- 挂载目录内产生 root 属主文件时，可在启动前导出
+  `export HOST_UID=$(id -u) HOST_GID=$(id -g)`，让容器以当前用户身份运行。
 - `make build` 需要联网（apt/pip 源），离线机器请勿使用；镜像请统一通过 bundle 导入。
+- `make check` 可离线自检镜像是否已导入、架构是否匹配。
 - `make help` 查看全部可用目标。
 - {{DEV_TOOLS_NOTE}}

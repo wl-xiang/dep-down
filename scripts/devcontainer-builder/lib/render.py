@@ -21,6 +21,8 @@ _DEV_SERVICE_TMPL = """\
       dockerfile: Dockerfile
       target: dev
     working_dir: /app
+    pull_policy: never
+    user: "${HOST_UID:-0}:${HOST_GID:-0}"
     volumes:
       - {{APP_VOLUME}}
     networks:
@@ -31,24 +33,30 @@ _DEV_SERVICE_TMPL = """\
 
 # Makefile 中依赖 dev 镜像的目标（build_dev_image=true 时生成）
 _DEV_MAKE_TARGETS = """\
-shell: ## 进入 dev 容器交互式 bash
+check-dev: ## 检查 dev 镜像是否已导入（离线环境不会自行构建）
+\t@docker image inspect {{DEV_IMAGE}} >/dev/null 2>&1 || { \\
+\t\techo "dev 镜像 {{DEV_IMAGE}} 未导入：请先 docker load 对应 bundle（或本次未构建 dev 镜像）"; \\
+\t\texit 1; \\
+\t}
+
+shell: check-dev ## 进入 dev 容器交互式 bash
 \t$(DEV_RUN)
 
-dev: ## 等价于 shell
+dev: check-dev ## 等价于 shell
 \t$(DEV_RUN)
 
-lint: ## ruff 静态检查
+lint: check-dev ## ruff 静态检查
 \t$(DEV_RUN) ruff check .
 
-compile: ## 字节码编译校验
+compile: check-dev ## 字节码编译校验
 \t$(DEV_RUN) python -m compileall -q .
 
-test: ## 运行 pytest
+test: check-dev ## 运行 pytest
 \t$(DEV_RUN) pytest -q
 
 """
 
-_DEV_PHONY = "shell dev lint compile test "
+_DEV_PHONY = "check-dev shell dev lint compile test "
 
 
 def _load(name):
@@ -74,7 +82,9 @@ def _base_mapping(p):
         "MIRROR_URL": p.mirror_url,
         "IMAGE_PREFIX": p.image_prefix,
         "APP_SOURCE_DIR": p.app_source_dir,
-        "APP_VOLUME": json.dumps(f"{p.app_source_dir}:/app"),
+        "APP_VOLUME": json.dumps(p.mount_path),
+        "IMAGE_LIST": " ".join(p.image_refs),
+        "DEV_IMAGE": p.dev_image,
         "PROD_COMMAND": p.prod_command,
         # YAML 双引号标量（json.dumps 的转义规则与 YAML 兼容）
         "PROD_COMMAND_YAML": json.dumps(p.prod_command),
@@ -158,25 +168,53 @@ def render_src_dockerfile(p, staging):
     )
 
 
-def render_compose(p):
-    depends = []
-    if p.app_depends_on_nginx:
-        depends.append("nginx")
-    if p.app_depends_on_postgres:
-        depends.append("postgres")
-    depends_block = ""
-    if depends:
-        depends_block = "    depends_on:\n" + "".join(
-            f"      - {d}\n" for d in depends
-        )
+def _app_options_block(p):
+    """app 服务的端口发布与 env_file 注入。"""
+    lines = []
+    if p.has_app_port:
+        if p.enable_nginx:
+            # 已由 nginx 反代，app 只对容器网络暴露，避免与宿主机端口冲突
+            lines.append("    expose:\n")
+            lines.append(f"      - \"{p.app_port}\"\n")
+        else:
+            lines.append("    ports:\n")
+            lines.append(f"      - \"{p.app_port}:{p.app_port}\"\n")
+    if p.env_file_list:
+        lines.append("    env_file:\n")
+        lines.extend(f"      - {json.dumps(x)}\n" for x in p.env_file_list)
+    return "".join(lines)
 
+
+def _depends_on_block(p):
+    """app 的启动依赖；postgres 等待健康检查通过，避免首次连接被拒。"""
+    if not p.app_depends_on_nginx and not p.app_depends_on_postgres:
+        return ""
+    lines = ["    depends_on:\n"]
+    if p.app_depends_on_nginx:
+        lines.append("      nginx:\n        condition: service_started\n")
+    if p.app_depends_on_postgres:
+        lines.append("      postgres:\n        condition: service_healthy\n")
+    return "".join(lines)
+
+
+def _nginx_service(p):
+    mount = ""
+    if p.has_app_port:
+        mount = "    volumes:\n      - ./nginx/conf.d:/etc/nginx/conf.d:ro\n"
+    return _sub(
+        _load("compose.service.nginx.tmpl"),
+        {**_base_mapping(p), "NGINX_CONF_MOUNT": mount},
+    ).rstrip("\n")
+
+
+def render_compose(p):
     dev_service = ""
     if p.build_dev_image:
         dev_service = _sub(_DEV_SERVICE_TMPL, _base_mapping(p))
 
     services = []
     if p.enable_nginx:
-        services.append(_load("compose.service.nginx.tmpl").rstrip("\n"))
+        services.append(_nginx_service(p))
     if p.enable_postgres:
         services.append(_load("compose.service.postgres.tmpl").rstrip("\n"))
     service_blocks = "\n".join(services)
@@ -189,7 +227,8 @@ def render_compose(p):
         _load("compose.base.tmpl"),
         {
             **_base_mapping(p),
-            "DEPENDS_ON_BLOCK": depends_block,
+            "APP_OPTIONS_BLOCK": _app_options_block(p),
+            "DEPENDS_ON_BLOCK": _depends_on_block(p),
             "DEV_SERVICE_BLOCK": dev_service,
             "SERVICE_BLOCKS": service_blocks,
             "VOLUMES_BLOCK": volumes_block,
@@ -197,12 +236,21 @@ def render_compose(p):
     )
 
 
+def render_nginx_conf(p):
+    """nginx 反代到 app:<app_port>；仅在启用 nginx 且指定 app_port 时生成。"""
+    return _sub(_load("nginx.conf.tmpl"), {"APP_PORT": p.app_port})
+
+
 def render_makefile(p):
+    # dev 目标块内部也用占位符（{{DEV_IMAGE}}），需先替换再插入主模板
+    dev_targets = ""
+    if p.build_dev_image:
+        dev_targets = _sub(_DEV_MAKE_TARGETS, _base_mapping(p))
     return _sub(
         _load("Makefile.tmpl"),
         {
             **_base_mapping(p),
-            "DEV_TARGETS": _DEV_MAKE_TARGETS if p.build_dev_image else "",
+            "DEV_TARGETS": dev_targets,
             "PHONY_DEV": _DEV_PHONY if p.build_dev_image else "",
         },
     )
@@ -256,4 +304,10 @@ def render_all(p, staging):
     }
     for name, content in files.items():
         (staging / name).write_text(content, encoding="utf-8")
+    if p.enable_nginx and p.has_app_port:
+        conf_dir = staging / "nginx" / "conf.d"
+        conf_dir.mkdir(parents=True, exist_ok=True)
+        (conf_dir / "default.conf").write_text(
+            render_nginx_conf(p), encoding="utf-8"
+        )
     return files

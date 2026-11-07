@@ -1,5 +1,7 @@
-"""docker buildx 构建、外挂服务镜像拉取与 docker save。"""
+"""docker buildx 构建、外挂服务镜像拉取与 docker save（gzip 直出）。"""
 
+import gzip
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -48,7 +50,23 @@ def image_list(p):
     return images
 
 
-def save_images(images, out_tar):
-    out_tar = Path(out_tar)
-    out_tar.parent.mkdir(parents=True, exist_ok=True)
-    _run(["docker", "save", "-o", str(out_tar), *images])
+def save_images(images, out_file):
+    """docker save 输出直接流式经 gzip 写入 out_file。
+
+    产物本身即 gzip 压缩的镜像归档（不再套一层包含 images.tar 的 tar），
+    因此 `docker load -i <out_file>` 可直接导入。
+    """
+    out_file = Path(out_file)
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    cmd = ["docker", "save", *images]
+    print("+ " + " ".join(cmd) + f" | gzip > {out_file}")
+    with gzip.open(out_file, "wb") as gz:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+        try:
+            shutil.copyfileobj(proc.stdout, gz, length=1 << 20)
+        finally:
+            proc.stdout.close()
+            returncode = proc.wait()
+    if returncode != 0:
+        out_file.unlink(missing_ok=True)
+        raise RuntimeError(f"docker save 失败（退出码 {returncode}）")

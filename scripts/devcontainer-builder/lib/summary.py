@@ -1,5 +1,6 @@
 """生成 GITHUB_STEP_SUMMARY（构建摘要）与 GITHUB_OUTPUT（产物路径等输出）。"""
 
+import hashlib
 import os
 from pathlib import Path
 
@@ -9,6 +10,14 @@ from .params import Params
 
 def _yes_no(flag):
     return "是" if flag else "否"
+
+
+def sha256_of(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def build_markdown(p, results):
@@ -30,6 +39,9 @@ def build_markdown(p, results):
     out.append(f"| glibc (wheel 标签) | `{p.glibc_version}` → `{p.pip_platform_tag}` |")
     out.append(f"| pip 镜像源 | `{p.pip_mirror}` ({p.mirror_url}) |")
     out.append(f"| wheels 数量 | {wheels_count} |")
+    out.append(f"| 应用监听端口 | {('`' + p.app_port + '`') if p.has_app_port else '(未指定)'} |")
+    out.append(f"| env_file | {', '.join(p.env_file_list) if p.env_file_list else '(无)'} |")
+    out.append(f"| SELinux 重打标签 (:z) | {_yes_no(p.selinux_relabel)} |")
     out.append("")
 
     out.append("### pip 包清单")
@@ -77,35 +89,44 @@ def build_markdown(p, results):
 
     out.append("### 产物清单")
     out.append("")
-    out.append("| 文件 | 大小 |")
-    out.append("| --- | --- |")
+    out.append("| 文件 | 大小 | SHA256 |")
+    out.append("| --- | --- | --- |")
     if src_tgz:
-        out.append(f"| {src_tgz.name} | {human_size(src_tgz.stat().st_size)} |")
+        out.append(
+            f"| {src_tgz.name} | {human_size(src_tgz.stat().st_size)} "
+            f"| `{sha256_of(src_tgz)}` |"
+        )
     if bundle_tgz:
-        out.append(f"| {bundle_tgz.name} | {human_size(bundle_tgz.stat().st_size)} |")
+        out.append(
+            f"| {bundle_tgz.name} | {human_size(bundle_tgz.stat().st_size)} "
+            f"| `{sha256_of(bundle_tgz)}` |"
+        )
     out.append("")
 
     out.append("### 内网使用步骤")
     out.append("")
     out.append("1. 从本次运行页面底部 **Artifacts** 下载两个产物"
                "（zip 仅为封装、不压缩，解压即得 tgz），"
-               "传输到与目标平台一致的内网机器。")
-    out.append("2. 导入镜像:")
+               "传输到与目标平台一致的内网机器，并用上表 SHA256 校验完整性。")
+    out.append("2. 导入镜像（tgz 是 gzip 压缩的镜像归档，可直接 load）:")
     out.append("")
     out.append("```bash")
-    out.append(f"tar xzf devcontainer-bundle_{p.tag}.tgz")
-    out.append("docker load -i images.tar")
+    out.append(f"docker load -i devcontainer-bundle_{p.tag}.tgz")
     out.append("```")
     out.append("")
-    out.append("3. 解压源码包并进入目录:")
+    out.append("3. 把源码包内容铺到应用根目录（`--skip-old-files` 不覆盖已存在的业务文件）:")
     out.append("")
     out.append("```bash")
-    out.append(f"tar xzf devcontainer-src_{p.tag}.tgz")
-    out.append("cd devcontainer-src")
+    out.append(f"tar xzf devcontainer-src_{p.tag}.tgz -C ~/apps/myapp1 \\")
+    out.append("    --strip-components=1 --skip-old-files")
+    out.append("cd ~/apps/myapp1")
     out.append("```")
     out.append("")
-    out.append(f"4. 将应用代码放入该目录（prod 命令为 `{p.prod_command}`，"
-               "如需调整请修改 `docker-compose.yaml` 中 app 服务的 `command`）。")
+    out.append(f"4. 离线自检（确认镜像已导入、架构匹配；prod 命令为 `{p.prod_command}`):")
+    out.append("")
+    out.append("```bash")
+    out.append("make check")
+    out.append("```")
     out.append("")
     if p.build_dev_image:
         out.append("5. 开发调试:")
@@ -117,7 +138,7 @@ def build_markdown(p, results):
         out.append("make test       # pytest -q")
         out.append("```")
         out.append("")
-        out.append("6. 运行服务:")
+        out.append("6. 运行服务（`--no-build`，不会触发任何联网）:")
     else:
         out.append("5. 运行服务（本次未构建 dev 镜像，无 make shell/lint/test 目标）:")
     out.append("")
@@ -127,6 +148,11 @@ def build_markdown(p, results):
     out.append("make down")
     out.append("```")
     out.append("")
+    if p.has_app_port:
+        out.append(f"应用端口 `{p.app_port}`: 已在 compose 中配置"
+                   + ("（由 nginx 反代，仅容器网络暴露）。"
+                      if p.enable_nginx else "（宿主机同端口映射）。"))
+        out.append("")
     if p.enable_postgres:
         out.append("postgres 已启用: 连接串 "
                    "`postgres://postgres:postgres@postgres:5432/postgres`，"
@@ -134,6 +160,11 @@ def build_markdown(p, results):
         out.append("")
     if p.enable_nginx:
         out.append("nginx 已启用: 宿主机 `http://<host>:8080` → 容器 80 端口。")
+        if p.has_app_port:
+            out.append(f"已生成 `nginx/conf.d/default.conf`，反代到 `app:{p.app_port}`。")
+        else:
+            out.append("未指定 app_port，nginx 未生成反代配置，需自行挂载 "
+                       "`nginx/conf.d/default.conf`。")
         out.append("")
     out.append("> 完整手册见仓库 `docs/offline-devcontainer.md`。")
     out.append("")
@@ -160,9 +191,11 @@ def emit(p, results):
         if src_tgz:
             entries.append(("src_tgz", str(src_tgz)))
             entries.append(("src_name", src_tgz.name))
+            entries.append(("src_sha256", sha256_of(src_tgz)))
         if bundle_tgz:
             entries.append(("bundle_tgz", str(bundle_tgz)))
             entries.append(("bundle_name", bundle_tgz.name))
+            entries.append(("bundle_sha256", sha256_of(bundle_tgz)))
         entries.append(("images", ",".join(results.get("images") or [])))
         with open(output_path, "a", encoding="utf-8") as f:
             for key, value in entries:

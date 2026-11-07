@@ -1,7 +1,15 @@
   postgres:
     image: postgres:16
+    restart: unless-stopped
+    pull_policy: never
     environment:
       POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     volumes:
       - pgdata:/var/lib/postgresql/data
     networks:

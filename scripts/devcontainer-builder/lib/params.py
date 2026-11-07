@@ -82,6 +82,9 @@ class Params:
     build_dev_image: bool
     image_prefix: str
     app_source_dir: str
+    app_port: str
+    env_file: str
+    selinux_relabel: bool
     tag: str
 
     # ---------- 派生值 ----------
@@ -132,6 +135,32 @@ class Params:
         return f"{self.image_prefix}-dev:{self.tag}"
 
     @property
+    def image_refs(self):
+        """本次导入/自检需要的镜像清单（与 docker.image_list 保持一致）。"""
+        images = [self.prod_image]
+        if self.build_dev_image:
+            images.append(self.dev_image)
+        if self.enable_nginx:
+            images.append("nginx:stable")
+        if self.enable_postgres:
+            images.append("postgres:16")
+        return images
+
+    @property
+    def has_app_port(self):
+        return bool(self.app_port)
+
+    @property
+    def env_file_list(self):
+        """env_file 支持逗号或空格分隔。"""
+        return [x for x in self.env_file.replace(",", " ").split() if x]
+
+    @property
+    def mount_path(self):
+        """容器 /app 的挂载源；SELinux Enforcing 主机可追加 :z 重打标签。"""
+        return f"{self.app_source_dir}:/app{':z' if self.selinux_relabel else ''}"
+
+    @property
     def prod_command_args(self):
         return shlex.split(self.prod_command)
 
@@ -158,6 +187,9 @@ def load():
         build_dev_image=_env_bool("BUILD_DEV_IMAGE", True),
         image_prefix=_env("IMAGE_PREFIX", "devcontainer"),
         app_source_dir=_env("APP_SOURCE_DIR", "."),
+        app_port=_env("APP_PORT", ""),
+        env_file=_env("ENV_FILE", ""),
+        selinux_relabel=_env_bool("SELINUX_RELABEL", False),
         tag=datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S"),
     )
     return validate(params)
@@ -197,6 +229,17 @@ def validate(p):
         raise ParamError(f"prod_command 无法解析为命令: {p.prod_command!r}")
     if not p.app_source_dir.strip():
         raise ParamError("app_source_dir 不能为空")
+    if p.app_source_dir.startswith("~"):
+        raise ParamError(
+            "app_source_dir 不支持 ~ 展开，请写绝对路径或在应用根目录使用 '.'"
+        )
+    if p.app_port:
+        if not p.app_port.isdigit() or not 1 <= int(p.app_port) <= 65535:
+            raise ParamError(f"app_port 必须是 1-65535 的整数: {p.app_port!r}")
+        p.app_port = str(int(p.app_port))
+    for path in p.env_file_list:
+        if path.startswith("~"):
+            raise ParamError(f"env_file 不支持 ~ 展开: {path!r}")
 
     for pkg in p.pip_package_list:
         if any(ch.isspace() for ch in pkg):
