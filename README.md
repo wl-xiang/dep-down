@@ -65,11 +65,13 @@ pip install -r requirements.txt
 ### 内网使用
 
 ```bash
-docker load -i devcontainer-bundle_<ts>.tgz
-tar xzf devcontainer-src_<ts>.tgz && cd devcontainer-src
+docker load -i devcontainer-bundle_<ts>.tgz          # 镜像归档可直接导入
+tar xzf devcontainer-src_<ts>.tgz -C ~/apps/myapp1 \
+    --strip-components=1 --skip-old-files            # 铺到应用根目录，不覆盖业务文件
+cd ~/apps/myapp1 && make check                       # 离线自检镜像/架构
 make shell      # dev 容器交互 bash（ruff/pytest 已内置）
 make lint && make compile && make test
-make up         # docker compose up -d 运行 python main.py
+make up         # docker compose up -d --no-build，运行 python main.py
 ```
 
 > 参数校验（如依赖未启用的外挂服务）、多平台/多 glibc 组合、镜像命名与产物规范等说明详见 [docs/offline-devcontainer.md](docs/offline-devcontainer.md)。

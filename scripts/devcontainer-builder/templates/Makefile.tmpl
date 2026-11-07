@@ -3,17 +3,32 @@
 
 COMPOSE := docker compose
 DEV_RUN := $(COMPOSE) --profile dev run --rm dev
+IMAGES := {{IMAGE_LIST}}
 
 .DEFAULT_GOAL := help
 
 help: ## 显示所有可用目标
 	@grep -E '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-14s %s\n", $$1, $$2}'
 
-build: ## 构建镜像（需要能访问 apt/pip 源的网络环境，离线机器勿用）
+check: ## 离线自检：镜像是否已导入、容器架构是否匹配
+	@echo "== docker 架构 =="
+	@docker version --format '  client={{.Client.Arch}} server={{.Server.Arch}}' 2>/dev/null || echo "  (无法获取)"
+	@failed=0; for img in $(IMAGES); do \
+		if docker image inspect "$$img" >/dev/null 2>&1; then \
+			echo "  OK    $$img"; \
+		else \
+			echo "  MISS  $$img   <-- 请先 docker load 对应的 bundle"; failed=1; \
+		fi; \
+	done; \
+	if [ "$$failed" = "1" ]; then echo "== 自检失败 =="; exit 1; fi
+	@echo "== 自检通过 =="
+
+build: ## 构建镜像（需联网访问 apt/pip 源；离线机器请改用 bundle + make up）
+	@echo "!!! make build 需要外网，离线环境请勿执行；请改用 docker load + make up !!!"
 	$(COMPOSE) --profile dev build
 
-up: ## 后台启动 prod 服务（及已启用的外挂服务）
-	$(COMPOSE) up -d
+up: ## 后台启动 prod 服务（离线，不构建不拉取）
+	$(COMPOSE) up -d --no-build
 
 down: ## 停止并移除容器与网络
 	$(COMPOSE) down
@@ -27,4 +42,4 @@ logs: ## 跟随查看日志
 {{DEV_TARGETS}}package-src: ## 重新打包当前源码目录为 tgz（输出到上级目录）
 	tar czf ../devcontainer-src-repack_$$(date +%Y%m%d-%H%M%S).tgz --warning=no-file-changed --exclude='*.tgz' --exclude='__pycache__' --exclude='.pytest_cache' .
 
-.PHONY: help build up down ps logs{{PHONY_DEV}}package-src
+.PHONY: help check build up down ps logs {{PHONY_DEV}}package-src

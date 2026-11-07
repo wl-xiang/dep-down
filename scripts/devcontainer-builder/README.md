@@ -21,8 +21,9 @@ scripts/devcontainer-builder/
     ├── Dockerfile.dev.tmpl        # dev 阶段（FROM prod + 开发工具）
     ├── compose.base.tmpl          # compose 骨架（app 服务 + 占位块）
     ├── compose.service.nginx.tmpl # nginx 服务子模板
-    ├── compose.service.postgres.tmpl # postgres 服务子模板
-    ├── Makefile.tmpl              # make 目标（up/shell/lint/compile/test 等）
+    ├── compose.service.postgres.tmpl # postgres 服务子模板（含健康检查）
+    ├── nginx.conf.tmpl            # nginx 反代配置（启用 nginx 且指定 app_port 时）
+    ├── Makefile.tmpl              # make 目标（check/up/shell/lint/compile/test 等）
     ├── requirements.txt.tmpl      # pip 包清单
     └── README.src.tmpl            # src 产物内的快速上手说明
 ```
@@ -45,7 +46,10 @@ scripts/devcontainer-builder/
 | `PROD_COMMAND` | `python main.py` | prod 服务命令 |
 | `BUILD_DEV_IMAGE` | `true` | 是否构建 dev 镜像 |
 | `IMAGE_PREFIX` | `devcontainer` | 镜像名前缀 |
-| `APP_SOURCE_DIR` | `.` | 挂载为 /app 的源码目录 |
+| `APP_SOURCE_DIR` | `.` | 挂载为 /app 的源码目录（不支持 `~`） |
+| `APP_PORT` | 空 | 应用容器内监听端口；启用 nginx 时自动生成反代配置 |
+| `ENV_FILE` | 空 | 注入 app 服务的 env 文件，逗号/空格分隔 |
+| `SELINUX_RELABEL` | `false` | 挂载追加 `:z`（SELinux Enforcing 主机） |
 | `DEVCONTAINER_SKIP_DOCKER` | 空 | 置 `1` 跳过 docker 步骤（本地联调） |
 
 ## 本地运行
