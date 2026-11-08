@@ -6,7 +6,7 @@
 # 用法: bash build.sh [新TAG]     # 新TAG 默认 addon-{{TAG}}
 #
 # 步骤：
-#   1. 在联网机器上下载缺的包为 wheel（推荐本目录 scripts/pip/pip_download.py，
+#   1. 在联网机器上下载缺的包为 wheel（推荐用本仓库 scripts/pip/pip_download.py，
 #      会同时生成带 --no-index 头的 requirements.txt），拷回内网机器
 #      <应用根目录>/wheels/ 下；
 #   2. 在本目录（docs/devcontainer）执行 bash build.sh；
@@ -21,7 +21,7 @@ WHEELS_DIR="$SRC_ROOT/wheels"
 
 if ! ls "$WHEELS_DIR"/*.whl >/dev/null 2>&1; then
     echo "错误: $WHEELS_DIR 下没有 .whl 文件。"
-    echo "  请先在联网机器下载 wheel（可用 $SCRIPT_DIR/scripts/pip/pip_download.py），"
+    echo "  请先在联网机器下载 wheel（可用本仓库 scripts/pip/pip_download.py），"
     echo "  拷贝到 $WHEELS_DIR 后重试。"
     exit 1
 fi

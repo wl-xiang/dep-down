@@ -56,9 +56,8 @@ pip install -r requirements.txt
 
 1. Fork 本仓库，进入 **Actions** → **Build DevContainer** → **Run workflow**。
 2. 填写参数（完整参数表见 [docs/offline-devcontainer.md](docs/offline-devcontainer.md)）。
-3. 运行完成后，在 **Summary** 底部下载三个产物：
-   - `install.sh`：安装脚本（独立 Artifact）
-   - `devcontainer-src_<时间戳>.tgz`：运行时源码包（Dockerfile、compose 模板、Makefile、requirements.txt、scripts/）
+3. 运行完成后，在 **Summary** 底部下载两个产物：
+   - `devcontainer-src_<时间戳>.tgz`：运行时源码包 + 安装脚本（Artifact 解压得到 `install.sh` 与 `devcontainer-src_<时间戳>.tgz` 两个文件；src 包含 Dockerfile、compose 模板、Makefile、requirements.txt 等）
    - `devcontainer-bundle_<时间戳>.tgz`：镜像 Bundle 包（gzip 压缩的 `docker save` 归档，可直接 `docker load`）
    > Artifacts 下载得到的是 zip 封装（已设为不压缩，仅存储），解压即得上述文件。
 4. Summary 页同时给出构建摘要（参数、镜像清单、产物大小）与内网使用步骤。
@@ -66,7 +65,7 @@ pip install -r requirements.txt
 ### 内网使用
 
 ```bash
-# 三个产物解压到同一目录后：
+# 两个产物解压到同一目录后：
 docker load -i devcontainer-bundle_<ts>.tgz          # 镜像归档可直接导入
 bash install.sh ~/apps/myapp1                         # 安装到应用根目录 docs/devcontainer/
 cd ~/apps/myapp1/docs/devcontainer && make check      # 离线自检镜像/架构
