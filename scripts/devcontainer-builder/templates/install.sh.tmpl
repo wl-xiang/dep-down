@@ -4,6 +4,9 @@
 # 用法：把本脚本与 devcontainer-src_{{TS}}.tgz 放在同一目录（建议放在项目
 # 根目录的 dist/ 下），然后执行：
 #   bash install.sh /path/to/your/project-root     # 在 dist/ 中即 bash install.sh ../
+#   bash install.sh --load /path/to/your/project-root
+#                                                  # 安装开始前自动 docker load
+#                                                  # 同目录的镜像归档 tgz
 # （Artifact 的 zip 解压后可能丢失可执行权限，统一用 `bash install.sh` 调用）
 #
 # 作用：
@@ -24,18 +27,48 @@ set -euo pipefail
 NEEDS_MAIN_PY={{NEEDS_MAIN_PY}}   # 1 = prod_command 为默认 python main.py
 
 usage() {
-    echo "用法: bash $0 <SRC_ROOT>"
+    echo "用法: bash $0 [--load] <SRC_ROOT>"
     echo "  SRC_ROOT = 你的项目根目录（必须已存在；根目录操作文件安装到 SRC_ROOT，"
     echo "             原始副本与模板安装到 <SRC_ROOT>/docs/devcontainer）"
+    echo "  --load   安装开始前自动在脚本所在目录查找 devcontainer-docker-images_*.tgz"
+    echo "           并 docker load 导入（等效于手动 docker load -i 该归档）"
     exit 2
 }
 
+LOAD_IMAGES=0
+if [ "${1:-}" = "--load" ]; then
+    LOAD_IMAGES=1
+    shift
+fi
 [ "$#" -eq 1 ] || usage
 SRC_ROOT=$1
 [ -d "$SRC_ROOT" ] || { echo "错误: SRC_ROOT 不是目录: $SRC_ROOT"; exit 1; }
 SRC_ROOT=$(cd "$SRC_ROOT" && pwd -P)
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
+
+# ---------- 可选：--load 在安装开始前自动导入镜像归档 ----------
+if [ "$LOAD_IMAGES" = "1" ]; then
+    command -v docker >/dev/null 2>&1 \
+        || { echo "错误: --load 需要 docker 命令，但未在 PATH 中检测到 docker"; exit 1; }
+    shopt -s nullglob
+    img_tgzs=("$SCRIPT_DIR"/devcontainer-docker-images_*.tgz)
+    shopt -u nullglob
+    if [ "${#img_tgzs[@]}" -eq 0 ]; then
+        echo "错误: 未在 $SCRIPT_DIR 找到 devcontainer-docker-images_*.tgz"
+        echo "      （--load 需与镜像归档放在同一目录，即 install.sh 旁边）"
+        exit 1
+    fi
+    if [ "${#img_tgzs[@]}" -gt 1 ]; then
+        echo "错误: $SCRIPT_DIR 下有多个镜像归档，请只保留本次使用的那个："
+        printf '  %s\n' "${img_tgzs[@]}"
+        exit 1
+    fi
+    echo "== 导入镜像归档（docker load）=="
+    docker load -i "${img_tgzs[0]}"
+    echo "  已导入 ${img_tgzs[0]}"
+fi
+
 shopt -s nullglob
 tgzs=("$SCRIPT_DIR"/devcontainer-src_*.tgz)
 shopt -u nullglob
@@ -149,7 +182,11 @@ echo "安装完成: 根目录操作文件在 $SRC_ROOT，原始副本在 $DEST"
 echo "compose 文件: $COMPOSE_FILE"
 echo ""
 echo "后续步骤："
-echo "  1. docker load -i devcontainer-docker-images_{{TS}}.tgz    # 在 install.sh 所在目录执行，若尚未导入镜像"
+if [ "$LOAD_IMAGES" = "1" ]; then
+    echo "  1. （镜像已随 --load 自动导入，跳过 docker load）"
+else
+    echo "  1. docker load -i devcontainer-docker-images_{{TS}}.tgz    # 在 install.sh 所在目录执行，若尚未导入镜像"
+fi
 echo "  2. cd \"$SRC_ROOT\"                          # 所有 make / build.sh 命令都在项目根目录执行"
 echo "  3. make check && make up && make logs"
 echo "  （make shell / lint / compile / test 也在项目根目录执行；docs/devcontainer 下"

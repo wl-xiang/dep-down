@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>离线开发环境 Bundle 安装说明（devcontainer-bundle_{{TS}}）</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+         max-width: 880px; margin: 2rem auto; padding: 0 1rem;
+         line-height: 1.65; color: #1f2328; }
+  h1 { font-size: 1.5rem; border-bottom: 2px solid #d0d7de; padding-bottom: .4rem; }
+  h2 { font-size: 1.2rem; margin-top: 2rem; }
+  code { background: #f6f8fa; padding: .15em .4em; border-radius: 6px;
+         font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .9em; }
+  pre { background: #f6f8fa; padding: 1rem; border-radius: 8px; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  .comment { color: #6e7781; }
+  table { border-collapse: collapse; margin: 1rem 0; }
+  th, td { border: 1px solid #d0d7de; padding: .4rem .8rem; text-align: left; }
+  th { background: #f6f8fa; }
+  .tip { background: #fff8c5; border-left: 4px solid #d4a72c; padding: .6rem 1rem;
+         border-radius: 0 8px 8px 0; }
+  footer { margin-top: 3rem; color: #6e7781; font-size: .85rem;
+           border-top: 1px solid #d0d7de; padding-top: .8rem; }
+</style>
+</head>
+<body>
+
+<h1>离线开发环境 Bundle 安装说明</h1>
+
+<p>本 zip 包（<code>devcontainer-bundle_{{TS}}</code>）解压后共 4 个文件：</p>
+
+<table>
+  <tr><th>#</th><th>文件</th><th>说明</th></tr>
+  <tr><td>1</td><td><code>devcontainer-docker-images_{{TS}}.tgz</code></td><td>镜像归档（docker load 用）</td></tr>
+  <tr><td>2</td><td><code>devcontainer-src_{{TS}}.tgz</code></td><td>源码/模板包</td></tr>
+  <tr><td>3</td><td><code>install.sh</code></td><td>安装脚本</td></tr>
+  <tr><td>4</td><td><code>readme.html</code></td><td>本说明</td></tr>
+</table>
+
+<h2>建议安装方式</h2>
+
+<p>把 zip 包放到项目根目录的 <code>dist/</code> 文件夹下解压，然后就地安装：</p>
+
+<pre><code># 1. 在项目根目录新建 dist/ 文件夹（若无），把本 zip 整个移入；
+# 2. 进入 dist/ 解压（解压出的 4 个文件与 zip 同级）：
+unzip devcontainer-bundle_{{TS}}.zip
+# 3. 仍在 dist/ 目录中执行安装（参数 ../ 即项目根目录）：
+#    加 --load 可在安装开始前自动 docker load 同目录的镜像归档（一步到位）
+bash install.sh ../
+# 4. 导入镜像（也在 dist/ 目录；若上一步用了 --load 则跳过）：
+docker load -i devcontainer-docker-images_{{TS}}.tgz
+# 5. 回到项目根目录，自检并启动：
+cd ..
+make check &amp;&amp; make up &amp;&amp; make logs</code></pre>
+
+<div class="tip">
+<strong>一键安装 + 导入镜像：</strong>
+<code>bash install.sh --load ../</code><br>
+安装开始前自动在脚本所在目录查找 <code>devcontainer-docker-images_*.tgz</code> 并
+<code>docker load</code> 导入，随后完成安装，无需再手动执行第 4 步。
+</div>
+
+<h2>install.sh 做的事</h2>
+
+<ul>
+  <li>解压 src 包到 <code>&lt;项目根&gt;/docs/devcontainer</code>（原始文件副本，仅用于
+    把改坏的根目录文件复制回去重置；不要在该目录下运行任何脚本）；</li>
+  <li>把 <code>Makefile</code> / <code>build.sh</code> / <code>Dockerfile</code>（由 Dockerfile.addon 改名）/
+    <code>README-devcontainer.md</code>（由 README.md 改名）/ <code>.dockerignore</code> / <code>.gitignore</code>
+    安装到项目根目录（已存在同名文件时终止安装，不会覆盖）；</li>
+  <li>复制 docker-compose.yml 模板到项目根目录为 <code>docker-compose.yml</code>；</li>
+  <li>创建 <code>wheels/requirements.txt</code> 离线安装头（<code>--no-index --find-links=./</code>），
+    把 wheel 放进 wheels/ 后即可用
+    <code>pip install -r wheels/requirements.txt &lt;包名&gt;</code> 离线安装。</li>
+</ul>
+
+<p>所有 make 命令、build.sh 都在项目根目录执行；详细说明见项目根目录的
+<code>README-devcontainer.md</code>（或 <code>docs/devcontainer/README.md</code>，二者内容一致）。</p>
+
+<footer>
+镜像 TAG 后缀: {{TAG}}；完整手册见仓库 docs/offline-devcontainer.md
+</footer>
+
+</body>
+</html>

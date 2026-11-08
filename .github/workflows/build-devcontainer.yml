@@ -230,20 +230,26 @@ jobs:
             test -x "${{ steps.build.outputs.install_sh }}" \
               || { echo "::error::install.sh 缺少可执行权限"; exit 1; }
             bash -n "${{ steps.build.outputs.install_sh }}"
+            grep -q -- '--load' "${{ steps.build.outputs.install_sh }}" \
+              || { echo "::error::install.sh 缺少 --load 选项"; exit 1; }
             sha256sum "${{ steps.build.outputs.install_sh }}"
           else
             echo "::error::install.sh 未生成"
             exit 1
           fi
-          echo "--- readme.txt (bundle 安装说明) ---"
-          if [ -n "${{ steps.build.outputs.readme_txt }}" ] && [ -s "${{ steps.build.outputs.readme_txt }}" ]; then
-            grep -q 'install.sh' "${{ steps.build.outputs.readme_txt }}" \
-              || { echo "::error::readme.txt 未包含 install.sh 使用说明"; exit 1; }
-            grep -q 'dist' "${{ steps.build.outputs.readme_txt }}" \
-              || { echo "::error::readme.txt 未包含 dist/ 放置说明"; exit 1; }
-            sha256sum "${{ steps.build.outputs.readme_txt }}"
+          echo "--- readme.html (bundle 安装说明) ---"
+          if [ -n "${{ steps.build.outputs.readme_html }}" ] && [ -s "${{ steps.build.outputs.readme_html }}" ]; then
+            grep -q 'install.sh' "${{ steps.build.outputs.readme_html }}" \
+              || { echo "::error::readme.html 未包含 install.sh 使用说明"; exit 1; }
+            grep -q 'dist' "${{ steps.build.outputs.readme_html }}" \
+              || { echo "::error::readme.html 未包含 dist/ 放置说明"; exit 1; }
+            grep -q -- '--load' "${{ steps.build.outputs.readme_html }}" \
+              || { echo "::error::readme.html 未包含 --load 用法说明"; exit 1; }
+            head -1 "${{ steps.build.outputs.readme_html }}" | grep -q '<!DOCTYPE html>' \
+              || { echo "::error::readme.html 不是 HTML 文档"; exit 1; }
+            sha256sum "${{ steps.build.outputs.readme_html }}"
           else
-            echo "::error::readme.txt 未生成"
+            echo "::error::readme.html 未生成"
             exit 1
           fi
           echo "--- build.sh (from src tgz) ---"
@@ -313,8 +319,8 @@ jobs:
 
       # Artifacts 只能是 zip 封装：设 compression-level 0 让 zip 只做存储，
       # 避免 tgz 再被 zip 二次压缩。唯一产物 devcontainer-bundle_<时间戳>，
-      # zip 内含镜像归档 tgz、src tgz、install.sh 与 readme.txt 四个文件
-      - name: Upload bundle artifact (docker images tgz + src tgz + install.sh + readme.txt)
+      # zip 内含镜像归档 tgz、src tgz、install.sh 与 readme.html 四个文件
+      - name: Upload bundle artifact (docker images tgz + src tgz + install.sh + readme.html)
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.build.outputs.bundle_name }}
@@ -322,6 +328,6 @@ jobs:
             ${{ steps.build.outputs.images_tgz }}
             ${{ steps.build.outputs.src_tgz }}
             ${{ steps.build.outputs.install_sh }}
-            ${{ steps.build.outputs.readme_txt }}
+            ${{ steps.build.outputs.readme_html }}
           compression-level: 0
           if-no-files-found: error

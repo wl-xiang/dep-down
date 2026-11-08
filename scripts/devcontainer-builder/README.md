@@ -34,7 +34,7 @@ scripts/devcontainer-builder/
     ├── build.sh.tmpl              # 离线补装入口（项目根执行，docker build 根目录 Dockerfile）
     ├── dockerignore.tmpl          # 项目根 .dockerignore（安装/合并；构建上下文排除 dist/ wheels/ 等）
     ├── gitignore.tmpl             # 项目根 .gitignore（安装/合并；忽略离线产物与补装缓存）
-    ├── readme.txt.tmpl            # bundle 安装说明（放进 Artifact zip，引导 dist/ 解压 + install.sh ../）
+    ├── readme.html.tmpl           # bundle 安装说明（HTML，放进 Artifact zip，引导 dist/ 解压 + install.sh ../，含 --load 用法）
     └── README.src.tmpl            # src 产物内的快速上手说明（项目根为 README-devcontainer.md）
 ```
 
@@ -95,7 +95,8 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
 ## 主要设计点
 
 - **install.sh + 根目录操作文件**：install.sh 先做全部前置检查再写盘（docs/
-  devcontainer 不存在、compose 与根目录操作文件无同名冲突），然后：解压 src
+  devcontainer 不存在、compose 与根目录操作文件无同名冲突），可选 `--load`
+  在安装开始前自动 docker load 同目录的镜像归档，然后：解压 src
   到 `<根>/docs/devcontainer/`（**原始副本**，仅用于把改坏的根目录文件复制回
   重置，不在该目录运行脚本）；把 compose 模板原样复制到项目根为
   `docker-compose.yml`（仅去掉 `.tpl` 后缀，不做渲染）；把 `Makefile` /
@@ -149,9 +150,10 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   （bundle zip / 镜像归档 tgz / src tgz）统一使用 UTC+8 时间戳。
 - **唯一 Artifact**：`devcontainer-bundle_<时间戳>` 一个 zip 内含
   `devcontainer-docker-images_<时间戳>.tgz`（docker save 直出 gzip，docker
-  load 用）、`devcontainer-src_<时间戳>.tgz`、`install.sh` 与 `readme.txt`
+  load 用）、`devcontainer-src_<时间戳>.tgz`、`install.sh` 与 `readme.html`
   四个文件；"Bundle" 专指该外部 zip，镜像归档文件名用 "Docker Images"。
-  安装方式：zip 放项目根 `dist/` 解压后 `bash install.sh ../`。
+  安装方式：zip 放项目根 `dist/` 解压后 `bash install.sh ../`（加 `--load`
+  可在安装开始前自动 docker load 同目录的镜像归档 tgz）。
 - **glibc 语义**：基础镜像固定 slim-bookworm（glibc 2.36），glibc 参数仅决定
   pip download 请求的 manylinux 标签集合（目标 glibc 及以下全部标签）。
 - **YAML 安全**：compose 中的 `command` 与 `volumes` 挂载路径使用

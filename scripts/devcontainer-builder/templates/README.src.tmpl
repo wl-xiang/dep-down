@@ -13,7 +13,7 @@
 - **`docs/devcontainer/`**：上述文件的**原始副本** + `docker-compose.yml.tpl` +
   nginx 配置等。只在根目录文件被改坏时，从这里复制回去重置；
   **不要在该目录下直接运行任何脚本**（脚本按执行时的工作目录解析路径）。
-- **`dist/`**：bundle zip 的解压位置（镜像归档 tgz / src tgz / install.sh / readme.txt）。
+- **`dist/`**：bundle zip 的解压位置（镜像归档 tgz / src tgz / install.sh / readme.html）。
 
 | 项目 | 值 |
 | --- | --- |
@@ -31,26 +31,28 @@
 CPU 架构与上表平台一致。
 
 ```bash
-# 0. 把 bundle zip 放到项目根目录 dist/ 文件夹下并解压（见 dist/readme.txt）
+# 0. 把 bundle zip 放到项目根目录 dist/ 文件夹下并解压（见 dist/readme.html）
 #    unzip devcontainer-bundle_<时间戳>.zip   # 在 dist/ 中执行
 
-# 1. 导入镜像（在 dist/ 中执行；tgz 是 gzip 压缩的 docker save 归档，可直接 load）
-cd dist && docker load -i devcontainer-docker-images_{{TS}}.tgz
+# 1. 导入镜像 + 安装（在 dist/ 中执行，参数 ../ 即项目根目录）
+#    --load 会在安装开始前自动 docker load 同目录的镜像归档（一步到位）
+bash install.sh --load ../
+#    （等价的两步写法：
+#      cd dist && docker load -i devcontainer-docker-images_{{TS}}.tgz
+#      bash install.sh ../
+#     tgz 是 gzip 压缩的 docker save 归档，可直接 load）
 
-# 2. 安装（在 dist/ 中执行，参数 ../ 即项目根目录）
-bash install.sh ../
-
-# 3. 离线自检（回到项目根目录：镜像是否已导入、架构是否匹配）
+# 2. 离线自检（回到项目根目录：镜像是否已导入、架构是否匹配）
 cd ..
 make check
 
-# 4. 开发
+# 3. 开发
 make shell        # 交互式 bash
 make lint         # ruff check .
 make compile      # python -m compileall -q .
 make test         # pytest -q
 
-# 5. 运行（--no-build，不联网）
+# 4. 运行（--no-build，不联网）
 make up && make logs
 make down         # 停止
 ```

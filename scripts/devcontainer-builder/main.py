@@ -4,16 +4,16 @@
 执行序列（对应计划书 4.6）:
     1. 读取环境变量 → lib/params.py 解析与校验
     2. lib/render.py 渲染 Dockerfile / docker-compose.yml.tpl / Makefile /
-       requirements.txt / main.py 占位 / install.sh / readme.txt /
+       requirements.txt / main.py 占位 / install.sh / readme.html /
        .dockerignore / .gitignore
     3. lib/pip.py 复用 pip_download 逻辑下载 wheels/
     4. lib/docker.py buildx 构建 prod(/dev)、拉取外挂镜像、docker save 直出 gzip
     5. lib/package.py 打包 devcontainer-src_<ts>.tgz；镜像归档
        devcontainer-docker-images_<ts>.tgz 已在上一步直出；
-       install.sh 与 readme.txt 写入 dist/
+       install.sh 与 readme.html 写入 dist/
     6. lib/summary.py 写 GITHUB_STEP_SUMMARY / GITHUB_OUTPUT，
        上传唯一 Artifact：devcontainer-bundle_<ts>（zip，内含镜像归档 tgz、
-       src tgz、install.sh 与 readme.txt 四个文件）
+       src tgz、install.sh 与 readme.html 四个文件）
 
 本地联调可设置 DEVCONTAINER_SKIP_DOCKER=1 跳过 docker 步骤。
 """
@@ -117,10 +117,10 @@ def main():
         p, REPO_ROOT / "dist" / "install.sh"
     )
     print(f"== install 脚本: {install_sh} ==")
-    readme_txt = render_mod.render_readme_txt(
-        p, REPO_ROOT / "dist" / "readme.txt"
+    readme_html = render_mod.render_readme_html(
+        p, REPO_ROOT / "dist" / "readme.html"
     )
-    print(f"== 安装说明: {readme_txt} ==")
+    print(f"== 安装说明: {readme_html} ==")
 
     if images_tgz is not None:
         print(f"== 镜像归档产物: {images_tgz} "
@@ -131,7 +131,7 @@ def main():
         "src_tgz": src_tgz,
         "images_tgz": images_tgz,
         "install_sh": install_sh,
-        "readme_txt": readme_txt,
+        "readme_html": readme_html,
         "images": images,
         "wheels_count": wheels_count,
         "skipped_docker": skip_docker,
