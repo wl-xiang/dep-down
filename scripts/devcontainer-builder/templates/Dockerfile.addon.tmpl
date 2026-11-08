@@ -1,14 +1,19 @@
 # 由 scripts/devcontainer-builder 生成，请勿手工编辑。
 # 镜像 TAG: {{TAG}}
-# 用途：离线补装 Python 包（配合 build.sh 使用）。
+# 用途：离线补装 Python 包（配合 build.sh 使用）。本文件随 install.sh
+#       安装到项目根目录（src root）并改名为 Dockerfile；docs/devcontainer/
+#       下是原始副本（Dockerfile.addon），仅用于重置。
 #   1. 在联网机器上把缺的包下载为 wheel（推荐用本仓库 scripts/pip/pip_download.py，
 #      会同时生成带 --no-index 头的 requirements.txt），拷回内网机器
-#      <应用根目录>/wheels/ 下；
-#   2. 在本目录（docs/devcontainer）执行: bash build.sh
+#      项目根目录 wheels/ 下；
+#   2. 在项目根目录执行: bash build.sh
 # 说明：
 #   - wheels 只在本构建层临时存在（COPY 到 /tmp/addon-wheels），install 与
 #     rm 在同一 RUN 层执行，不会增大最终镜像体积；
-#   - wheels/ 内有 requirements.txt 时按清单安装（其 --no-index 头保证不联网），
-#     否则安装目录下全部 .whl；
-#   - 依赖已在基础镜像中安装的包会被 pip 自动跳过，不会重复安装。
+#   - wheels/requirements.txt 含真实包名（非选项/注释/空行）时按清单安装
+#     （其 --no-index 头保证不联网），否则安装目录下全部 .whl——install.sh
+#     预置的 requirements.txt 只有离线安装头，此时即"装目录下全部 wheel"；
+#   - 依赖已在基础镜像中安装的包会被 pip 自动跳过，不会重复安装；
+#   - build.sh 使用只含 wheels 的临时上下文构建，因此根目录 .dockerignore
+#     对 wheels/ 的排除不影响本文件；不要在项目根目录直接 docker build . 。
 {{ADDON_STAGES}}

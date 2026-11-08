@@ -27,6 +27,7 @@ def build_markdown(p, results):
     src_tgz = results.get("src_tgz")
     images_tgz = results.get("images_tgz")
     install_sh = results.get("install_sh")
+    readme_txt = results.get("readme_txt")
     skipped_docker = results.get("skipped_docker", False)
     bundle_name = f"devcontainer-bundle_{p.ts}"
 
@@ -42,6 +43,8 @@ def build_markdown(p, results):
     out.append(f"| glibc (wheel 标签) | `{p.glibc_version}` → `{p.pip_platform_tag}` |")
     out.append(f"| pip 镜像源 | `{p.pip_mirror}` ({p.mirror_url}) |")
     out.append(f"| wheels 数量 | {wheels_count} |")
+    out.append(f"| 预装 lucide 图标库 (pip) | {_yes_no(p.enable_lucide)} |")
+    out.append(f"| 预装 Oracle Instant Client 19 | {_yes_no(p.enable_oracle_instantclient)} |")
     if p.dev_image_only:
         image_mode = "仅 dev 镜像（部署与开发共用，镜像归档只含该镜像）"
     elif p.build_dev_image:
@@ -54,10 +57,16 @@ def build_markdown(p, results):
     out.append(f"| SELinux 重打标签 (:z) | {_yes_no(p.selinux_relabel)} |")
     out.append("")
 
-    out.append("### pip 包清单")
+    out.append("### pip 包清单（含预装组件）")
     out.append("")
-    if p.pip_package_list:
-        out.extend(f"- `{x}`" for x in p.pip_package_list)
+    if p.preinstall_pip_packages:
+        for x in p.preinstall_pip_packages:
+            note = ""
+            if x == "lucide" and p.enable_lucide:
+                note = "（预装：SVG 图标库）"
+            elif x.startswith("oracledb") and p.enable_oracle_instantclient:
+                note = "（预装：配合 Instant Client 19 连 Oracle 11g）"
+            out.append(f"- `{x}`{note}")
     else:
         out.append("- (无)")
     out.append("")
@@ -100,7 +109,7 @@ def build_markdown(p, results):
     out.append("### 产物清单")
     out.append("")
     out.append(f"唯一 Artifact：**{bundle_name}**（zip 封装、仅存储不压缩，"
-               "解压即得以下三个文件）")
+               "解压即得以下四个文件）")
     out.append("")
     out.append("| 文件 | 大小 | SHA256 |")
     out.append("| --- | --- | --- |")
@@ -120,55 +129,68 @@ def build_markdown(p, results):
             f"| {install_sh.name}（安装脚本） | {human_size(install_sh.stat().st_size)} "
             f"| `{sha256_of(install_sh)}` |"
         )
+    if readme_txt:
+        out.append(
+            f"| {readme_txt.name}（安装说明） | {human_size(readme_txt.stat().st_size)} | (纯文本) |"
+        )
     out.append("")
 
     out.append("### 内网使用步骤")
     out.append("")
     out.append("1. 从本次运行页面底部 **Artifacts** 下载唯一产物"
                f" **{bundle_name}**（zip 仅为封装、不压缩，解压得到"
-               " 镜像归档 tgz、src tgz 与 install.sh 三个文件），"
+               " 镜像归档 tgz、src tgz、install.sh 与 readme.txt 四个文件），"
                "传输到与目标平台一致的内网机器，并用上表 SHA256 校验完整性。")
-    out.append("2. 导入镜像（tgz 是 gzip 压缩的镜像归档，可直接 load）:")
+    out.append("")
+    out.append("2. **把 artifact zip 包放到你的项目根目录 `dist/` 文件夹下**"
+               "（没有就新建一个），然后在 `dist/` 里解压、就地安装："
+               "place artifact zipball in project root `./dist/` dir, then"
+               " unzip and run `./install.sh ../`")
     out.append("")
     out.append("```bash")
-    out.append(f"docker load -i devcontainer-docker-images_{p.ts}.tgz")
+    out.append("mkdir -p /path/to/your-project/dist   # 项目根目录下的 dist/")
+    out.append("# 把 devcontainer-bundle zip 移入 dist/ 后：")
+    out.append(f"cd /path/to/your-project/dist && unzip {bundle_name}.zip")
+    out.append(f"docker load -i devcontainer-docker-images_{p.ts}.tgz"
+               "   # 导入镜像（gzip 压缩归档，可直接 load）")
+    out.append("bash install.sh ../                     # 参数 ../ 即项目根目录")
     out.append("```")
     out.append("")
-    out.append("3. 安装到应用根目录（在 install.sh 与 src tgz 所在目录执行，"
-               "参数为你的项目根目录；会把 src 解压到 `<项目根>/docs/devcontainer`、"
-               "把 `docker-compose.yml.tpl` 复制到项目根目录为 `docker-compose.yml`，"
-               "并在缺少 `main.py` 时放置占位入口）:")
+    out.append("   install.sh 会把 `Makefile` / `build.sh` / `Dockerfile`"
+               "（由 Dockerfile.addon 改名）/ `README-devcontainer.md`（由"
+               " README.md 改名）/ `.dockerignore` / `.gitignore` 安装到项目"
+               "根目录（同名文件已存在时终止安装，不覆盖），把 src 解压到"
+               " `<项目根>/docs/devcontainer`（原始副本，用于重置），把"
+               " `docker-compose.yml` 复制到项目根目录，并在缺少 `main.py` 时"
+               "放置占位入口。")
+    out.append("")
+    out.append(f"3. 离线自检（回到**项目根目录**执行，确认镜像已导入、架构匹配；"
+               f"prod 命令为 `{p.prod_command}`):")
     out.append("")
     out.append("```bash")
-    out.append("bash install.sh ~/apps/myapp1")
-    out.append("```")
-    out.append("")
-    out.append(f"4. 离线自检（确认镜像已导入、架构匹配；prod 命令为 `{p.prod_command}`):")
-    out.append("")
-    out.append("```bash")
-    out.append("cd ~/apps/myapp1/docs/devcontainer")
+    out.append("cd /path/to/your-project")
     out.append("make check")
     out.append("```")
     out.append("")
     if p.dev_tools_enabled:
-        out.append("5. 开发调试（均在 `docs/devcontainer` 目录执行）:")
-        out.append("")
-        out.append("```bash")
+        out.append("4. 开发调试（均在**项目根目录**执行）:")
+    else:
+        out.append("4. 运行服务（本次未构建 dev 镜像，无 make shell/lint/test 目标）:")
+    out.append("")
+    out.append("```bash")
+    if p.dev_tools_enabled:
         out.append("make shell      # 交互式 bash")
         out.append("make lint       # ruff check .")
         out.append("make compile    # python -m compileall -q .")
         out.append("make test       # pytest -q")
-        out.append("```")
-        out.append("")
-        out.append("6. 运行服务（`--no-build`，不会触发任何联网）:")
-    else:
-        out.append("5. 运行服务（本次未构建 dev 镜像，无 make shell/lint/test 目标）:")
-    out.append("")
-    out.append("```bash")
     out.append("make up")
     out.append("make logs")
     out.append("make down")
     out.append("```")
+    out.append("")
+    out.append("> 后续 make / build.sh 命令都在项目根目录执行；`docs/devcontainer/`"
+               " 下是原始副本，改坏根目录文件时从那里复制回去重置，不要在该目录"
+               "下直接运行任何脚本。")
     out.append("")
     if p.has_app_port:
         out.append(f"应用端口 `{p.app_port}`: 已在 compose 中配置"
@@ -227,6 +249,9 @@ def emit(p, results):
         if install_sh:
             entries.append(("install_sh", str(install_sh)))
             entries.append(("install_sha256", sha256_of(install_sh)))
+        readme_txt = results.get("readme_txt")
+        if readme_txt:
+            entries.append(("readme_txt", str(readme_txt)))
         entries.append(("images", ",".join(results.get("images") or [])))
         with open(output_path, "a", encoding="utf-8") as f:
             for key, value in entries:

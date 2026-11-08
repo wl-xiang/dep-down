@@ -13,7 +13,9 @@ services:
     image: {{APP_IMAGE}}
     build:
       context: .
-      dockerfile: Dockerfile
+      # 联网重建版 Dockerfile 在 docs/devcontainer/（context = 项目根目录，
+      # 其内 COPY docs/devcontainer/requirements.txt）；离线机器无需 build
+      dockerfile: docs/devcontainer/Dockerfile
       target: {{APP_BUILD_TARGET}}
     working_dir: /app
     restart: unless-stopped

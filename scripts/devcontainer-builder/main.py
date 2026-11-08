@@ -4,15 +4,16 @@
 执行序列（对应计划书 4.6）:
     1. 读取环境变量 → lib/params.py 解析与校验
     2. lib/render.py 渲染 Dockerfile / docker-compose.yml.tpl / Makefile /
-       requirements.txt / main.py 占位 / install.sh
+       requirements.txt / main.py 占位 / install.sh / readme.txt /
+       .dockerignore / .gitignore
     3. lib/pip.py 复用 pip_download 逻辑下载 wheels/
     4. lib/docker.py buildx 构建 prod(/dev)、拉取外挂镜像、docker save 直出 gzip
     5. lib/package.py 打包 devcontainer-src_<ts>.tgz；镜像归档
        devcontainer-docker-images_<ts>.tgz 已在上一步直出；
-       install.sh 写入 dist/
+       install.sh 与 readme.txt 写入 dist/
     6. lib/summary.py 写 GITHUB_STEP_SUMMARY / GITHUB_OUTPUT，
        上传唯一 Artifact：devcontainer-bundle_<ts>（zip，内含镜像归档 tgz、
-       src tgz 与 install.sh 三个文件）
+       src tgz、install.sh 与 readme.txt 四个文件）
 
 本地联调可设置 DEVCONTAINER_SKIP_DOCKER=1 跳过 docker 步骤。
 """
@@ -57,6 +58,7 @@ def main():
           f"build_dev_image={p.build_dev_image} dev_image_only={p.dev_image_only}")
     print(f"  nginx={p.enable_nginx}(depends={p.app_depends_on_nginx}) "
           f"postgres={p.enable_postgres}(depends={p.app_depends_on_postgres})")
+    print(f"  lucide={p.enable_lucide} oracle_instantclient={p.enable_oracle_instantclient}")
 
     work_dir = REPO_ROOT / "dist" / "devcontainer"
     if work_dir.exists():
@@ -103,11 +105,15 @@ def main():
     print(f"== src 产物: {src_tgz} "
           f"({package_mod.human_size(src_tgz.stat().st_size)}) ==")
 
-    # install.sh：独立文件（与两个 tgz 一同放进唯一的 bundle Artifact zip）
+    # install.sh 与安装说明：独立文件（与两个 tgz 一同放进唯一的 bundle Artifact zip）
     install_sh = render_mod.render_install_sh(
         p, REPO_ROOT / "dist" / "install.sh"
     )
     print(f"== install 脚本: {install_sh} ==")
+    readme_txt = render_mod.render_readme_txt(
+        p, REPO_ROOT / "dist" / "readme.txt"
+    )
+    print(f"== 安装说明: {readme_txt} ==")
 
     if images_tgz is not None:
         print(f"== 镜像归档产物: {images_tgz} "
@@ -118,6 +124,7 @@ def main():
         "src_tgz": src_tgz,
         "images_tgz": images_tgz,
         "install_sh": install_sh,
+        "readme_txt": readme_txt,
         "images": images,
         "wheels_count": wheels_count,
         "skipped_docker": skip_docker,

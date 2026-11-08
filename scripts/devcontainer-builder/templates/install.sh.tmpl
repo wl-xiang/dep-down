@@ -1,23 +1,32 @@
 #!/usr/bin/env bash
 # 由 scripts/devcontainer-builder 生成（时间戳: {{TS}}，镜像 TAG 后缀: {{TAG}}），请勿手工编辑。
 #
-# 用法：把本脚本与 devcontainer-src_{{TS}}.tgz 放在同一目录，然后执行：
-#   bash install.sh /path/to/your/project-root
+# 用法：把本脚本与 devcontainer-src_{{TS}}.tgz 放在同一目录（建议放在项目
+# 根目录的 dist/ 下），然后执行：
+#   bash install.sh /path/to/your/project-root     # 在 dist/ 中即 bash install.sh ../
 # （Artifact 的 zip 解压后可能丢失可执行权限，统一用 `bash install.sh` 调用）
 #
 # 作用：
 #   1. 在 <SRC_ROOT>/docs/devcontainer 下解压 devcontainer-src_{{TS}}.tgz
+#      （原始副本目录，仅用于把改坏的根目录文件复制回去重置）
 #   2. 把包内 docker-compose.yml.tpl 原样复制到 SRC_ROOT，命名为去掉 .tpl
 #      后缀的 docker-compose.yml（模板内 ${SRC_ROOT:-./} 与
 #      ${SRC_ROOT_NAME:-app} 由 docker compose 运行时解析，默认 ./ 即项目根目录）
-#   3. 若 SRC_ROOT 没有 main.py 且启动命令为默认值，复制占位 main.py
+#   3. 把 Makefile / build.sh / Dockerfile.addon(改名为 Dockerfile) /
+#      README.md(改名为 README-devcontainer.md) 复制到 SRC_ROOT，
+#      并安装/合并 .dockerignore 与 .gitignore
+#      ——所有 make、build.sh 命令此后都在项目根目录执行
+#   4. 在 SRC_ROOT/wheels/ 下创建离线安装头 requirements.txt
+#      （内容 --no-index --find-links=./，缺失时才创建）
+#   5. 若 SRC_ROOT 没有 main.py 且启动命令为默认值，复制占位 main.py
 set -euo pipefail
 
 NEEDS_MAIN_PY={{NEEDS_MAIN_PY}}   # 1 = prod_command 为默认 python main.py
 
 usage() {
     echo "用法: bash $0 <SRC_ROOT>"
-    echo "  SRC_ROOT = 你的项目根目录（必须已存在；devcontainer 文件将安装到 <SRC_ROOT>/docs/devcontainer）"
+    echo "  SRC_ROOT = 你的项目根目录（必须已存在；根目录操作文件安装到 SRC_ROOT，"
+    echo "             原始副本与模板安装到 <SRC_ROOT>/docs/devcontainer）"
     exit 2
 }
 
@@ -31,7 +40,8 @@ shopt -s nullglob
 tgzs=("$SCRIPT_DIR"/devcontainer-src_*.tgz)
 shopt -u nullglob
 if [ "${#tgzs[@]}" -eq 0 ]; then
-    echo "错误: 未在 $SCRIPT_DIR 找到 devcontainer-src_*.tgz（请与安装脚本放在同一目录）"
+    echo "错误: 未在 $SCRIPT_DIR 找到 devcontainer-src_*.tgz（请与安装脚本放在同一目录，"
+    echo "      建议把 bundle zip 放到项目根目录 dist/ 下解压后执行 bash install.sh ../）"
     exit 1
 fi
 if [ "${#tgzs[@]}" -gt 1 ]; then
@@ -42,12 +52,36 @@ fi
 TGZ=${tgzs[0]}
 
 DEST="$SRC_ROOT/docs/devcontainer"
+COMPOSE_FILE="$SRC_ROOT/docker-compose.yml"
+
+# 复制到项目根目录的根目录操作文件：包内文件名 -> 根目录文件名
+# （Dockerfile.addon 改名 Dockerfile、README.md 改名 README-devcontainer.md，
+#  避免与项目自己的 README.md 冲突）
+COPY_ROOT_FILES=("Makefile:Makefile" "build.sh:build.sh" "Dockerfile.addon:Dockerfile" "README.md:README-devcontainer.md")
+
+# ---------- 前置校验：先全部检查，再动手写盘（失败不留半套安装） ----------
+fail=0
 if [ -e "$DEST" ]; then
     echo "错误: $DEST 已存在。"
-    echo "  重新安装请先删除该目录：rm -rf \"$DEST\"（注意保留你手工修改过的 docker-compose.yml 等文件）"
-    exit 1
+    echo "  重新安装请先删除该目录：rm -rf \"$DEST\"（注意保留你手工修改过的文件）"
+    fail=1
 fi
+if [ -e "$COMPOSE_FILE" ]; then
+    echo "错误: $COMPOSE_FILE 已存在，避免覆盖你的 compose 配置，安装终止。"
+    echo "  请先移动/重命名该文件后重试。"
+    fail=1
+fi
+for pair in "${COPY_ROOT_FILES[@]}"; do
+    dst_name=${pair##*:}
+    if [ -e "$SRC_ROOT/$dst_name" ]; then
+        echo "错误: $SRC_ROOT/$dst_name 已存在，避免覆盖你自己的文件，安装终止。"
+        echo "  请先移动/重命名后重试（如为旧版安装残留，确认无需保留后删除）。"
+        fail=1
+    fi
+done
+[ "$fail" = "0" ] || exit 1
 
+# ---------- 安装 ----------
 mkdir -p "$DEST"
 tar xzf "$TGZ" -C "$DEST" --strip-components=1
 
@@ -56,25 +90,67 @@ TPL="$DEST/docker-compose.yml.tpl"
 
 # compose 运行文件：复制模板到项目根目录，仅去掉 .tpl 后缀（不做任何渲染，
 # ${SRC_ROOT:-./} / ${SRC_ROOT_NAME:-app} 由 docker compose 运行时解析）
-COMPOSE_FILE="$SRC_ROOT/docker-compose.yml"
-if [ -e "$COMPOSE_FILE" ]; then
-    echo "错误: $COMPOSE_FILE 已存在，避免覆盖你的 compose 配置，安装终止。"
-    echo "  请先移动/重命名该文件后重试。"
-    exit 1
-fi
+echo "== 复制 compose 模板 =="
 cp "$TPL" "$COMPOSE_FILE"
+echo "  已创建 $COMPOSE_FILE"
+
+# 根目录操作文件：从 docs/devcontainer 原始副本复制到项目根目录（改名见上）
+echo "== 安装根目录操作文件 =="
+for pair in "${COPY_ROOT_FILES[@]}"; do
+    src_name=${pair%%:*}
+    dst_name=${pair##*:}
+    cp "$DEST/$src_name" "$SRC_ROOT/$dst_name"
+    echo "  已创建 $SRC_ROOT/$dst_name (来自 $src_name)"
+done
+# zip/tar 传输可能丢失可执行位，显式恢复
+chmod 755 "$SRC_ROOT/build.sh"
+
+# .dockerignore / .gitignore：缺失时创建；已存在时仅追加缺失条目（不动原内容）
+merge_ignore_file() {  # $1 = 包内文件名（与根目录目标同名）
+    local src="$DEST/$1" dst="$SRC_ROOT/$1" line added=0
+    if [ ! -e "$dst" ]; then
+        cp "$src" "$dst"
+        echo "  已创建 $SRC_ROOT/$1"
+        return
+    fi
+    while IFS= read -r line; do
+        case "$line" in ''|'#'*) continue ;; esac
+        if ! grep -qxF -- "$line" "$dst"; then
+            printf '%s\n' "$line" >> "$dst"
+            added=1
+        fi
+    done < "$src"
+    if [ "$added" = "1" ]; then
+        echo "  已合并 $SRC_ROOT/$1（仅追加缺失条目，原有内容未改动）"
+    else
+        echo "  $SRC_ROOT/$1 已包含全部条目，未修改"
+    fi
+}
+echo "== 安装 .dockerignore / .gitignore =="
+merge_ignore_file ".dockerignore"
+merge_ignore_file ".gitignore"
+
+# wheels/requirements.txt：离线安装头（pip 会把 --find-links=./ 解析到本文件
+# 所在目录，把 wheel 放进 wheels/ 后即可 pip install -r wheels/requirements.txt <包名>）
+mkdir -p "$SRC_ROOT/wheels"
+REQ_FILE="$SRC_ROOT/wheels/requirements.txt"
+if [ ! -e "$REQ_FILE" ]; then
+    printf -- '--no-index --find-links=./\n' > "$REQ_FILE"
+    echo "已创建 $REQ_FILE（离线安装头）"
+fi
 
 if [ "$NEEDS_MAIN_PY" = "1" ] && [ ! -e "$SRC_ROOT/main.py" ]; then
     cp "$DEST/main.py" "$SRC_ROOT/main.py"
     echo "已创建占位入口 $SRC_ROOT/main.py（make up 默认运行 python main.py，请替换为真实入口）"
 fi
 
-echo "安装完成: $DEST"
+echo ""
+echo "安装完成: 根目录操作文件在 $SRC_ROOT，原始副本在 $DEST"
 echo "compose 文件: $COMPOSE_FILE"
 echo ""
 echo "后续步骤："
-echo "  1. docker load -i devcontainer-docker-images_{{TS}}.tgz    # 若尚未导入镜像"
-echo "  2. cd \"$DEST\""
+echo "  1. docker load -i devcontainer-docker-images_{{TS}}.tgz    # 在 install.sh 所在目录执行，若尚未导入镜像"
+echo "  2. cd \"$SRC_ROOT\"                          # 所有 make / build.sh 命令都在项目根目录执行"
 echo "  3. make check && make up && make logs"
-echo "  （make shell / lint / compile / test 也在该目录执行；compose 会自动使用"
-echo "    项目根目录的 docker-compose.yml；容器默认以当前用户身份运行）"
+echo "  （make shell / lint / compile / test 也在项目根目录执行；docs/devcontainer 下"
+echo "    是原始副本，改坏根目录文件时从那里复制回来重置即可）"

@@ -1,9 +1,19 @@
 # 离线 Python 开发环境（devcontainer）
 
-本目录（`<应用根目录>/docs/devcontainer`）由 GitHub Action `build-devcontainer`
-生成、经 `install.sh` 安装，需配合镜像归档 `devcontainer-docker-images_{{TS}}.tgz`
-在内网离线使用。**所有 make 命令都在本目录执行**（compose 使用项目根目录的
-`docker-compose.yml`）。
+本包由 GitHub Action `build-devcontainer` 生成、经 `install.sh` 安装到你的项目，
+需配合镜像归档 `devcontainer-docker-images_{{TS}}.tgz` 在内网离线使用。
+**所有 make / build.sh 命令都在项目根目录（src root）执行**。
+
+安装后的目录布局：
+
+- **项目根目录**：`Makefile`、`Dockerfile`（离线补装用，由 Dockerfile.addon 改名）、
+  `build.sh`、`README-devcontainer.md`（本文件副本）、`.dockerignore`、`.gitignore`、
+  `docker-compose.yml`、`wheels/`（离线补装 wheel，含离线安装头 requirements.txt）。
+  —— 你日常操作的位置。
+- **`docs/devcontainer/`**：上述文件的**原始副本** + `docker-compose.yml.tpl` +
+  nginx 配置等。只在根目录文件被改坏时，从这里复制回去重置；
+  **不要在该目录下直接运行任何脚本**（脚本按执行时的工作目录解析路径）。
+- **`dist/`**：bundle zip 的解压位置（镜像归档 tgz / src tgz / install.sh / readme.txt）。
 
 | 项目 | 值 |
 | --- | --- |
@@ -21,16 +31,18 @@
 CPU 架构与上表平台一致。
 
 ```bash
-# 1. 导入镜像（Bundle Artifact 解压得到 devcontainer-docker-images_{{TS}}.tgz，
-#    是 gzip 压缩的 docker save 归档，可直接 load）
-docker load -i devcontainer-docker-images_{{TS}}.tgz
+# 0. 把 bundle zip 放到项目根目录 dist/ 文件夹下并解压（见 dist/readme.txt）
+#    unzip devcontainer-bundle_<时间戳>.zip   # 在 dist/ 中执行
 
-# 2. 安装（在 install.sh 与 devcontainer-src_{{TS}}.tgz 所在目录执行，
-#    参数为你的项目根目录；会把 docker-compose.yml 复制到项目根目录）
-bash install.sh ~/apps/myapp1
+# 1. 导入镜像（在 dist/ 中执行；tgz 是 gzip 压缩的 docker save 归档，可直接 load）
+cd dist && docker load -i devcontainer-docker-images_{{TS}}.tgz
 
-# 3. 离线自检（镜像是否已导入、架构是否匹配）
-cd ~/apps/myapp1/docs/devcontainer && make check
+# 2. 安装（在 dist/ 中执行，参数 ../ 即项目根目录）
+bash install.sh ../
+
+# 3. 离线自检（回到项目根目录：镜像是否已导入、架构是否匹配）
+cd ..
+make check
 
 # 4. 开发
 make shell        # 交互式 bash
@@ -45,13 +57,16 @@ make down         # 停止
 
 ## 说明
 
-- `docker-compose.yml` 位于项目根目录，由 install.sh 从本目录的
-  `docker-compose.yml.tpl` 原样复制（仅去掉 `.tpl` 后缀，不做渲染）。模板中的
-  两个环境变量由 docker compose 运行时解析（冒号杠默认值语法）：
-  `${SRC_ROOT:-./}` 应用根目录（默认 `./` = 项目根目录，挂载为容器 `/app`）、
-  `${SRC_ROOT_NAME:-app}` compose 项目名后缀。需要调整时可用环境变量覆盖
-  （如 `SRC_ROOT=/path/to/app docker compose up`），或直接改项目根目录的
-  `docker-compose.yml`（`.tpl` 保持原样，留作参考）。
+- **所有 make / build.sh 命令都在项目根目录执行**：Makefile 与 build.sh 的路径
+  均按执行时的工作目录（pwd）解析，docs/devcontainer 下的原始副本与根目录
+  文件内容一致，改坏根目录文件后直接复制回去即可重置。
+- `docker-compose.yml` 位于项目根目录，由 install.sh 从
+  `docs/devcontainer/docker-compose.yml.tpl` 原样复制（仅去掉 `.tpl` 后缀，
+  不做渲染）。模板中的两个环境变量由 docker compose 运行时解析（冒号杠
+  默认值语法）：`${SRC_ROOT:-./}` 应用根目录（默认 `./` = 项目根目录，挂载为
+  容器 `/app`）、`${SRC_ROOT_NAME:-app}` compose 项目名后缀。需要调整时可用
+  环境变量覆盖（如 `SRC_ROOT=/path/to/app docker compose up`），或直接改项目
+  根目录的 `docker-compose.yml`（`.tpl` 保持原样，留作参考）。
 - `.tpl` 后缀确保该模板不会被 docker compose 自动发现，也不会与项目根目录下
   你自己的 compose 配置发生 `-f` / `*.override.yaml` 合并（compose 对 ports
   等列表只做并集、无法通过 override 移除）。
@@ -63,16 +78,22 @@ make down         # 停止
   `make shell HOST_UID=0 HOST_GID=0`。
 - 若项目根目录原本没有 `main.py`，install.sh 会复制一个占位入口（`make up`
   默认运行 `python main.py`）。请替换为你的真实应用入口。
+- `.dockerignore` / `.gitignore` 由 install.sh 安装到项目根目录（已存在时仅
+  追加缺失条目）：构建上下文与 git 忽略 `dist/`（bundle 产物）、`wheels/`
+  （离线补装 wheel）、`.addon-build/`（补装构建临时目录）等，避免大文件进入
+  镜像层或被误提交。
 - **离线补装 Python 包**：发现缺包时，在联网机器用本仓库的
-  `scripts/pip/pip_download.py` 下载 wheel 到 `<应用根目录>/wheels/`，
-  然后在本目录执行 `bash build.sh`——基于现有镜像生成
-  `<镜像前缀>:<stage>-addon-{{TS}}` 新镜像（wheel 只在构建层临时存在，不会增大
-  镜像体积），按输出的 sed 命令切换项目根目录的 `docker-compose.yml` 即可。
-  详见下文「离线补装 Python 包」。
+  `scripts/pip/pip_download.py` 下载 wheel 到项目根目录 `wheels/`，然后在
+  项目根目录执行 `bash build.sh`——基于现有镜像生成
+  `<镜像前缀>:<stage>-addon-{{TS}}` 新镜像（wheel 只在构建层临时存在，不会
+  增大镜像体积），按输出的 sed 命令切换项目根目录的 `docker-compose.yml`
+  即可。详见下文「离线补装 Python 包」。
 - 本包**不含 `wheels/`**：所有 wheel 已在构建镜像时安装，并固化在镜像
   `/wheels` 内。容器内离线安装额外依赖：
   `pip install --no-index --find-links=/wheels <pkg>`（需 root，即
-  `HOST_UID=0` 运行）。
+  `HOST_UID=0` 运行）；或把 wheel 放入项目根目录 `wheels/` 后
+  `pip install -r wheels/requirements.txt <pkg>`（离线安装头已由 install.sh
+  预置，`--find-links=./` 自动指向 wheels/ 所在目录）。
 - `make build` 需要联网（apt/pip 源），离线机器请勿使用；镜像请统一通过
   `devcontainer-docker-images_{{TS}}.tgz` 导入。
 - `make check` 可离线自检镜像是否已导入、架构是否匹配。
@@ -87,9 +108,9 @@ make down         # 停止
 # 1. 联网机器：下载 wheel（生成 wheels/ 目录，含带 --no-index 头的 requirements.txt；
 #    pip_download.py 在本仓库 scripts/pip/ 下，或直接使用仓库的 Pip Download Action）
 python scripts/pip/pip_download.py <包名...> -d /tmp/wheels
-#    把 /tmp/wheels 整个目录拷回内网 <应用根目录>/wheels/
+#    把 /tmp/wheels 整个目录拷回内网项目根目录 wheels/
 
-# 2. 内网机器，本目录（docs/devcontainer）执行：
+# 2. 内网机器，项目根目录执行：
 bash build.sh            # 生成 <镜像前缀>:<stage>-addon-{{TS}}（可传参自定义新 TAG 后缀）
 
 # 3. 按输出的 sed 命令把项目根目录的 docker-compose.yml 切换到新镜像，然后：
@@ -98,7 +119,12 @@ make up && make logs
 
 说明：
 
-- `Dockerfile.addon` 基于现有镜像分层构建：wheel 复制到 `/tmp` 安装后同层删除，
-  不增大镜像体积；已装过的依赖 pip 自动跳过。
-- `wheels/` 下有 `requirements.txt` 就按清单装，否则装目录下全部 `*.whl`。
+- `Dockerfile`（由 `docs/devcontainer/Dockerfile.addon` 安装改名而来）基于
+  现有镜像分层构建：wheel 复制到 `/tmp` 安装后同层删除，不增大镜像体积；
+  已装过的依赖 pip 自动跳过。
+- `wheels/requirements.txt` 含真实包名时按清单装；只有离线安装头（
+  install.sh 预置的状态）时，安装目录下全部 `*.whl`。
+- build.sh 的构建上下文是临时目录 `.addon-build`（只含 wheels），不会把
+  整个项目目录发给 docker daemon，也不受根目录 `.dockerignore` 影响；
+  构建结束自动清理。
 - 回滚：重新 `docker load -i devcontainer-docker-images_{{TS}}.tgz` 即可恢复原镜像。
