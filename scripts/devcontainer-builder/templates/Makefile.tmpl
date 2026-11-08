@@ -1,10 +1,12 @@
 # 由 scripts/devcontainer-builder 生成，请勿手工编辑。
 # 平台: {{DOCKER_PLATFORM}} | 镜像 TAG: {{TAG}}（时间戳: {{TS}}）
-# 本 Makefile 位于 <应用根目录>/docs/devcontainer，所有 make 命令都在该目录执行；
-# docker-compose.yml 由 install.sh 复制到项目根目录（本目录向上两级），挂载
-# 默认 ${SRC_ROOT:-./} 即项目根目录（可用环境变量 SRC_ROOT 覆盖）。
+# 本文件由 install.sh 安装到项目根目录（src root），所有 make 命令都在
+# 项目根目录执行；docker-compose.yml 也在项目根目录（install.sh 复制生成），
+# 挂载默认 ${SRC_ROOT:-./} 即项目根目录（可用环境变量 SRC_ROOT 覆盖）。
+# docs/devcontainer/ 下是本文件的原始副本，仅用于把改坏的根目录文件
+# 复制回去重置——不要在 docs/devcontainer 下直接运行任何脚本。
 
-COMPOSE_FILE := $(abspath ../../docker-compose.yml)
+COMPOSE_FILE := $(abspath docker-compose.yml)
 COMPOSE := docker compose -f $(COMPOSE_FILE)
 DEV_RUN := $(COMPOSE) run --rm dev
 IMAGES := {{IMAGE_LIST}}
@@ -27,7 +29,7 @@ check: ## 离线自检：compose 文件、镜像是否已导入、容器架构�
 	@docker version --format '  client={{.Client.Arch}} server={{.Server.Arch}}' 2>/dev/null || echo "  (无法获取)"
 	@failed=0; \
 	if [ ! -f "$(COMPOSE_FILE)" ]; then \
-		echo "  MISS  $(COMPOSE_FILE)   <-- 缺少 compose 运行文件，请重新执行 install.sh"; failed=1; \
+		echo "  MISS  $(COMPOSE_FILE)   <-- 缺少 compose 运行文件，请在项目根目录重新执行 install.sh（dist/ 下：bash install.sh ../）"; failed=1; \
 	fi; \
 	for img in $(IMAGES); do \
 		if docker image inspect "$$img" >/dev/null 2>&1; then \
@@ -55,7 +57,10 @@ ps: ## 查看容器状态
 logs: ## 跟随查看日志
 	$(COMPOSE) logs -f
 
-{{DEV_TARGETS}}package-src: ## 重新打包当前源码目录为 tgz（输出到上级目录）
-	tar czf ../devcontainer-src-repack_$$(date +%Y%m%d-%H%M%S).tgz --warning=no-file-changed --exclude='*.tgz' --exclude='__pycache__' --exclude='.pytest_cache' .
+{{DEV_TARGETS}}package-src: ## 重新打包 docs/devcontainer 为 tgz（输出到 dist/，可配 install.sh 再次安装）
+	mkdir -p dist
+	tar czf dist/devcontainer-src-repack_$$(date +%Y%m%d-%H%M%S).tgz \
+		--exclude='*.tgz' --exclude='__pycache__' --exclude='.pytest_cache' \
+		-C docs/devcontainer .
 
 .PHONY: help check build up down ps logs {{PHONY_DEV}}package-src

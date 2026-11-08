@@ -45,7 +45,7 @@ def download_wheels(p, staging):
     wheels_dir = Path(staging) / "wheels"
     wheels_dir.mkdir(parents=True, exist_ok=True)
 
-    user_pkgs = p.pip_package_list
+    user_pkgs = p.preinstall_pip_packages
     dev_tools = p.dev_pip_tools
     if not user_pkgs and not dev_tools:
         print("== 未指定 pip 包且不构建 dev 镜像，跳过 pip download ==")

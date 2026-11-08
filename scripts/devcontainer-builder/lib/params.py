@@ -42,6 +42,14 @@ PIP_MIRRORS = {
 # dev 镜像额外安装的工具（wheel 会随 wheels/ 一起下载）
 DEV_PIP_TOOLS = ("ruff", "pytest", "pytest-cov")
 
+# 预装 lucide（SVG 图标库，Django/Jinja 模板渲染 lucide.dev 图标）的 pip 包名
+LUCIDE_PIP_PACKAGE = "lucide"
+
+# 预装 Oracle Instant Client 19 时随装的 python-oracledb 版本。
+# 锁定 2.5.1：与 Instant Client 19 + Oracle 11.2 Thick 模式的组合经过生产
+# 环境验证（参考 https://github.com/wl-xiang/oracle2excel 的 Dockerfile）。
+ORACLEDB_PIP_PACKAGE = "oracledb==2.5.1"
+
 # 产物/镜像时间戳统一使用东八区（UTC+8）
 TZ_CN = timezone(timedelta(hours=8), name="UTC+8")
 
@@ -82,6 +90,8 @@ class Params:
     custom_install_cmd: str
     enable_nginx: bool
     enable_postgres: bool
+    enable_lucide: bool
+    enable_oracle_instantclient: bool
     app_depends_on_nginx: bool
     app_depends_on_postgres: bool
     prod_command: str
@@ -125,6 +135,23 @@ class Params:
     @property
     def pip_package_list(self):
         return [x.strip() for x in self.pip_packages.split("$") if x.strip()]
+
+    @property
+    def preinstall_pip_packages(self):
+        """用户 pip 包 + 预装组件（lucide / oracledb）的合并清单。
+
+        用于 requirements.txt 渲染与 pip download；用户已显式写出同名包时
+        不重复追加（版本以其声明为准）。
+        """
+        pkgs = list(self.pip_package_list)
+        existing = {x.lower().split("=")[0].split("<")[0].split(">")[0].split("!")[0].strip()
+                    for x in pkgs}
+        if self.enable_lucide and "lucide" not in existing:
+            pkgs.append(LUCIDE_PIP_PACKAGE)
+        if (self.enable_oracle_instantclient
+                and "oracledb" not in existing):
+            pkgs.append(ORACLEDB_PIP_PACKAGE)
+        return pkgs
 
     @property
     def apt_package_list(self):
@@ -222,6 +249,8 @@ def load():
         custom_install_cmd=_env("CUSTOM_INSTALL_CMD", ""),
         enable_nginx=_env_bool("ENABLE_NGINX", False),
         enable_postgres=_env_bool("ENABLE_POSTGRES", False),
+        enable_lucide=_env_bool("ENABLE_LUCIDE", False),
+        enable_oracle_instantclient=_env_bool("ENABLE_ORACLE_INSTANTCLIENT", False),
         app_depends_on_nginx=_env_bool("APP_DEPENDS_ON_NGINX", False),
         app_depends_on_postgres=_env_bool("APP_DEPENDS_ON_POSTGRES", False),
         prod_command=_env("PROD_COMMAND", "python main.py"),

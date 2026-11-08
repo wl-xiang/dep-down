@@ -52,6 +52,16 @@ on:
         type: string
         required: false
         default: ''
+      enable_lucide:
+        description: 'Preinstall lucide (SVG icon library for Django/Jinja templates, pip package)'
+        type: boolean
+        required: true
+        default: false
+      enable_oracle_instantclient:
+        description: 'Preinstall Oracle Instant Client 19 + oracledb 2.5.1 (thick mode, for Oracle 11g db)'
+        type: boolean
+        required: true
+        default: false
       enable_nginx:
         description: 'Enable nginx sidecar service (8080:80)'
         type: boolean
@@ -164,6 +174,8 @@ jobs:
           PIP_PACKAGES: ${{ inputs.pip_packages }}
           APT_PACKAGES: ${{ inputs.apt_packages }}
           CUSTOM_INSTALL_CMD: ${{ inputs.custom_install_cmd }}
+          ENABLE_LUCIDE: ${{ inputs.enable_lucide }}
+          ENABLE_ORACLE_INSTANTCLIENT: ${{ inputs.enable_oracle_instantclient }}
           ENABLE_NGINX: ${{ inputs.enable_nginx }}
           ENABLE_POSTGRES: ${{ inputs.enable_postgres }}
           APP_DEPENDS_ON_NGINX: ${{ inputs.app_depends_on_nginx }}
@@ -197,6 +209,15 @@ jobs:
           fi
           grep -q 'devcontainer-src/main.py$' /tmp/src_tgz.list \
             || { echo "::error::src 包缺少占位 main.py"; exit 1; }
+          # 项目根目录操作文件（install.sh 复制/改名到 src root）与忽略文件
+          grep -q 'devcontainer-src/Makefile$' /tmp/src_tgz.list \
+            || { echo "::error::src 包缺少 Makefile"; exit 1; }
+          grep -q 'devcontainer-src/README.md$' /tmp/src_tgz.list \
+            || { echo "::error::src 包缺少 README.md"; exit 1; }
+          grep -q 'devcontainer-src/.dockerignore$' /tmp/src_tgz.list \
+            || { echo "::error::src 包缺少 .dockerignore"; exit 1; }
+          grep -q 'devcontainer-src/.gitignore$' /tmp/src_tgz.list \
+            || { echo "::error::src 包缺少 .gitignore"; exit 1; }
           # 离线补装机制（build.sh + Dockerfile.addon）
           grep -q 'devcontainer-src/Dockerfile.addon$' /tmp/src_tgz.list \
             || { echo "::error::src 包缺少 Dockerfile.addon"; exit 1; }
@@ -212,6 +233,17 @@ jobs:
             sha256sum "${{ steps.build.outputs.install_sh }}"
           else
             echo "::error::install.sh 未生成"
+            exit 1
+          fi
+          echo "--- readme.txt (bundle 安装说明) ---"
+          if [ -n "${{ steps.build.outputs.readme_txt }}" ] && [ -s "${{ steps.build.outputs.readme_txt }}" ]; then
+            grep -q 'install.sh' "${{ steps.build.outputs.readme_txt }}" \
+              || { echo "::error::readme.txt 未包含 install.sh 使用说明"; exit 1; }
+            grep -q 'dist' "${{ steps.build.outputs.readme_txt }}" \
+              || { echo "::error::readme.txt 未包含 dist/ 放置说明"; exit 1; }
+            sha256sum "${{ steps.build.outputs.readme_txt }}"
+          else
+            echo "::error::readme.txt 未生成"
             exit 1
           fi
           echo "--- build.sh (from src tgz) ---"
@@ -238,8 +270,8 @@ jobs:
 
       # Artifacts 只能是 zip 封装：设 compression-level 0 让 zip 只做存储，
       # 避免 tgz 再被 zip 二次压缩。唯一产物 devcontainer-bundle_<时间戳>，
-      # zip 内含镜像归档 tgz、src tgz 与 install.sh 三个文件
-      - name: Upload bundle artifact (docker images tgz + src tgz + install.sh)
+      # zip 内含镜像归档 tgz、src tgz、install.sh 与 readme.txt 四个文件
+      - name: Upload bundle artifact (docker images tgz + src tgz + install.sh + readme.txt)
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.build.outputs.bundle_name }}
@@ -247,5 +279,6 @@ jobs:
             ${{ steps.build.outputs.images_tgz }}
             ${{ steps.build.outputs.src_tgz }}
             ${{ steps.build.outputs.install_sh }}
+            ${{ steps.build.outputs.readme_txt }}
           compression-level: 0
           if-no-files-found: error

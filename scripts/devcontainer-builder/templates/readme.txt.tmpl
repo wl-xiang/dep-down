@@ -1,0 +1,39 @@
+离线开发环境 Bundle 安装说明（readme.txt）
+==========================================
+
+本 zip 包（devcontainer-bundle_{{TS}}）解压后共 4 个文件：
+
+  1. devcontainer-docker-images_{{TS}}.tgz   镜像归档（docker load 用）
+  2. devcontainer-src_{{TS}}.tgz             源码/模板包
+  3. install.sh                              安装脚本
+  4. readme.txt                              本说明
+
+建议安装方式：把 zip 包放到项目根目录的 dist/ 文件夹下解压，然后就地安装。
+
+  # 1. 在项目根目录新建 dist/ 文件夹（若无），把本 zip 整个移入；
+  # 2. 进入 dist/ 解压（解压出的 4 个文件与 zip 同级）：
+  unzip devcontainer-bundle_{{TS}}.zip
+  # 3. 仍在 dist/ 目录中执行安装（参数 ../ 即项目根目录）：
+  bash install.sh ../
+  # 4. 导入镜像（也在 dist/ 目录）：
+  docker load -i devcontainer-docker-images_{{TS}}.tgz
+  # 5. 回到项目根目录，自检并启动：
+  cd ..
+  make check && make up && make logs
+
+install.sh 做的事：
+
+  - 解压 src 包到 <项目根>/docs/devcontainer（原始文件副本，仅用于
+    把改坏的根目录文件复制回去重置；不要在该目录下运行任何脚本）；
+  - 把 Makefile / build.sh / Dockerfile（由 Dockerfile.addon 改名）/
+    README-devcontainer.md（由 README.md 改名）/ .dockerignore / .gitignore
+    安装到项目根目录（已存在同名文件时终止安装，不会覆盖）；
+  - 复制 docker-compose.yml 模板到项目根目录为 docker-compose.yml；
+  - 创建 wheels/requirements.txt 离线安装头（--no-index --find-links=./），
+    把 wheel 放进 wheels/ 后即可用
+    `pip install -r wheels/requirements.txt <包名>` 离线安装。
+
+所有 make 命令、build.sh 都在项目根目录执行；详细说明见项目根目录的
+README-devcontainer.md（或 docs/devcontainer/README.md，二者内容一致）。
+
+（镜像 TAG 后缀: {{TAG}}；完整手册见仓库 docs/offline-devcontainer.md）

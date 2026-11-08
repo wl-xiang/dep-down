@@ -13,12 +13,14 @@ from .params import Params
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 
 # compose 中的 dev 服务（profile=dev，仅 make shell/lint/compile/test 时激活）
+# build.dockerfile 指向 docs/devcontainer/Dockerfile（联网重建版 Dockerfile 位于
+# 该目录，context 为项目根目录）
 _DEV_SERVICE_TMPL = """\
   dev:
     image: {{DEV_IMAGE}}
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: docs/devcontainer/Dockerfile
       target: dev
     working_dir: /app
     pull_policy: never
@@ -58,14 +60,20 @@ test: check-dev ## 运行 pytest
 
 _DEV_PHONY = "check-dev shell dev lint compile test "
 
-# Dockerfile.addon 中基于现有镜像的阶段（离线补装 Python 包，配合 build.sh）
+# Dockerfile.addon 中基于现有镜像的阶段（离线补装 Python 包，配合 build.sh）。
+# requirements.txt 只在含有真实包名（非选项/注释/空行）时才按清单安装，
+# 否则安装目录下全部 .whl——保证只有离线安装头（--no-index --find-links=./）
+# 的空 requirements 不会静默装个寂寞。
 _ADDON_STAGE_TMPL = """\
 FROM {{BASE_IMAGE}} AS {{STAGE_NAME}}
 
 # wheels 只在本层临时存在：install 与 rm 同层执行，不增大最终镜像
 COPY wheels/ /tmp/addon-wheels/
 RUN set -eux; \\
-    if [ -f /tmp/addon-wheels/requirements.txt ]; then \\
+    if [ -f /tmp/addon-wheels/requirements.txt ] \\
+        && grep -Ev '^[[:space:]]*(#|--|$)' /tmp/addon-wheels/requirements.txt \\
+        | grep -q .; \\
+    then \\
         pip install --no-index --find-links=/tmp/addon-wheels \\
             -r /tmp/addon-wheels/requirements.txt; \\
     else \\
@@ -143,7 +151,8 @@ def _base_mapping(p):
         # YAML 双引号标量（json.dumps 的转义规则与 YAML 兼容）
         "PROD_COMMAND_YAML": json.dumps(p.prod_command),
         "PROD_COMMAND_JSON": p.prod_command_json,
-        "PIP_PACKAGES_LINES": "\n".join(p.pip_package_list),
+        # 用户包 + 预装组件（lucide / oracledb）的合并清单
+        "PIP_PACKAGES_LINES": "\n".join(p.preinstall_pip_packages),
         "DEV_PIP_TOOLS": " ".join(p.dev_pip_tools),
     }
 
@@ -165,19 +174,26 @@ def _custom_install_block(cmd):
     return f"RUN {cmd}\n"
 
 
-def _install_block(local_wheels):
+def _oracle_block(p):
+    """Oracle Instant Client 19 安装块（勾选 enable_oracle_instantclient 时）。"""
+    if not p.enable_oracle_instantclient:
+        return ""
+    return _load("Dockerfile.oracle.tmpl")
+
+
+def _install_block(local_wheels, req_path="requirements.txt"):
     if local_wheels:
         return (
             "# wheels 同时保留在镜像内，离线环境可在容器内继续安装:\n"
             "#   pip install --no-index --find-links=/wheels <pkg>\n"
             "COPY wheels/ /wheels/\n"
-            "COPY requirements.txt /app/requirements.txt\n"
+            f"COPY {req_path} /app/requirements.txt\n"
             "\n"
             "RUN pip install --no-index --find-links=/wheels -r /app/requirements.txt\n"
         )
     return (
         "# 发布包不含 wheels/（已装进镜像），重建时从 pip 源在线安装\n"
-        "COPY requirements.txt /app/requirements.txt\n"
+        f"COPY {req_path} /app/requirements.txt\n"
         "\n"
         "RUN pip install -r /app/requirements.txt\n"
     )
@@ -197,12 +213,17 @@ def _dev_pip_block(p, local_wheels):
 
 
 def render_dockerfile(p, local_wheels=True):
+    # 发布包内的重建版 Dockerfile 由 compose 在项目根目录构建（context=项目根），
+    # requirements.txt 位于 docs/devcontainer/，COPY 路径相应调整
+    req_path = ("requirements.txt" if local_wheels
+                else "docs/devcontainer/requirements.txt")
     base = {
         **_base_mapping(p),
         "APT_BLOCK": _apt_block(p.apt_package_list),
         "CUSTOM_INSTALL_BLOCK": _custom_install_block(p.custom_install_cmd),
-        "INSTALL_BLOCK": _install_block(local_wheels),
+        "INSTALL_BLOCK": _install_block(local_wheels, req_path),
         "DEV_PIP_BLOCK": _dev_pip_block(p, local_wheels),
+        "ORACLE_BLOCK": _oracle_block(p),
     }
     if p.dev_image_only:
         # 仅 dev 镜像模式：单阶段 Dockerfile，产物只有一个 dev 镜像
@@ -340,6 +361,16 @@ def render_requirements(p):
     return text
 
 
+def render_dockerignore(p):
+    """项目根目录 .dockerignore（install.sh 安装/合并），防止 wheels/dist 进入构建上下文。"""
+    return _sub(_load("dockerignore.tmpl"), _base_mapping(p))
+
+
+def render_gitignore(p):
+    """项目根目录 .gitignore（install.sh 安装/合并），忽略离线产物与本地补装缓存。"""
+    return _sub(_load("gitignore.tmpl"), _base_mapping(p))
+
+
 def render_main_py():
     """占位入口：install.sh 在应用根目录无 main.py 且启动命令为默认值时复制。"""
     return _load("main.py.tmpl")
@@ -352,6 +383,15 @@ def render_install_sh(p, out_file):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     path.chmod(0o755)
+    return path
+
+
+def render_readme_txt(p, out_file):
+    """渲染 bundle 安装说明 readme.txt 到 dist/（随 install.sh 等一起进 Artifact zip）。"""
+    content = _sub(_load("readme.txt.tmpl"), _base_mapping(p))
+    path = Path(out_file)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
     return path
 
 
@@ -413,6 +453,9 @@ def render_all(p, staging):
         # 离线补装：wheel 打进现有镜像生成 addon 镜像
         "Dockerfile.addon": render_dockerfile_addon(p),
         "build.sh": render_build_sh(p),
+        # 随 install.sh 安装/合并到项目根目录（src root）
+        ".dockerignore": render_dockerignore(p),
+        ".gitignore": render_gitignore(p),
     }
     for name, content in files.items():
         (staging / name).write_text(content, encoding="utf-8")

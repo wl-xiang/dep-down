@@ -17,20 +17,25 @@ scripts/devcontainer-builder/
 │   ├── package.py           # src tgz 打包
 │   └── summary.py           # GITHUB_STEP_SUMMARY / GITHUB_OUTPUT
 └── templates/
-    ├── Dockerfile.prod.tmpl       # prod 阶段（基础镜像 + APT/自定义命令 + 离线 pip install）
+    ├── Dockerfile.prod.tmpl       # prod 阶段（基础镜像 + APT/自定义命令/Oracle + 离线 pip install）
     ├── Dockerfile.dev.tmpl        # dev 阶段（FROM prod + 开发工具）
     ├── Dockerfile.devonly.tmpl    # 仅 dev 镜像模式的单阶段 Dockerfile
+    ├── Dockerfile.oracle.tmpl     # Oracle Instant Client 19 块（enable_oracle_instantclient 时插入）
     ├── compose.base.tmpl          # compose 模板骨架（app 服务 + 占位块；输出为 .tpl）
     ├── compose.service.nginx.tmpl # nginx 服务子模板
     ├── compose.service.postgres.tmpl # postgres 服务子模板（含健康检查）
     ├── nginx.conf.tmpl            # nginx 反代配置（启用 nginx 且指定 app_port 时）
-    ├── Makefile.tmpl              # make 目标（check/up/shell/lint/compile/test 等）
-    ├── requirements.txt.tmpl      # pip 包清单
+    ├── Makefile.tmpl              # make 目标（安装到项目根，路径按 pwd 解析）
+    ├── requirements.txt.tmpl      # pip 包清单（含预装组件）
     ├── main.py.tmpl               # 占位入口（install.sh 在应用根目录无 main.py 时复制）
-    ├── install.sh.tmpl            # 安装脚本（与两个 tgz 一同放进唯一的 bundle Artifact zip）
-    ├── Dockerfile.addon.tmpl      # 离线补装：基于现有镜像生成 addon 阶段（wheels 进 /tmp 同层删）
-    ├── build.sh.tmpl              # 离线补装入口（docker build Dockerfile.addon，默认后缀 addon-<时间戳>）
-    └── README.src.tmpl            # src 产物内的快速上手说明
+    ├── install.sh.tmpl            # 安装脚本（复制/改名根目录操作文件、合并忽略文件、wheels 安装头）
+    ├── Dockerfile.addon.tmpl      # 离线补装：基于现有镜像生成 addon 阶段（wheels 进 /tmp 同层删；
+    │                              #  install.sh 复制到项目根时改名 Dockerfile）
+    ├── build.sh.tmpl              # 离线补装入口（项目根执行，docker build 根目录 Dockerfile）
+    ├── dockerignore.tmpl          # 项目根 .dockerignore（安装/合并；构建上下文排除 dist/ wheels/ 等）
+    ├── gitignore.tmpl             # 项目根 .gitignore（安装/合并；忽略离线产物与补装缓存）
+    ├── readme.txt.tmpl            # bundle 安装说明（放进 Artifact zip，引导 dist/ 解压 + install.sh ../）
+    └── README.src.tmpl            # src 产物内的快速上手说明（项目根为 README-devcontainer.md）
 ```
 
 ## 环境变量（与 workflow inputs 一一对应）
@@ -44,6 +49,8 @@ scripts/devcontainer-builder/
 | `PIP_PACKAGES` | 空 | `$` 分隔的 pip 包列表 |
 | `APT_PACKAGES` | 空 | 空格分隔的 APT 包 |
 | `CUSTOM_INSTALL_CMD` | 空 | 镜像内的个性化安装命令 |
+| `ENABLE_LUCIDE` | `false` | 预装 lucide（SVG 图标库，Django/Jinja 模板用，pip 包） |
+| `ENABLE_ORACLE_INSTANTCLIENT` | `false` | 预装 Oracle Instant Client 19（Thick 模式连 Oracle 11.2）+ `oracledb==2.5.1` |
 | `ENABLE_NGINX` | `false` | 启用 nginx 服务 |
 | `ENABLE_POSTGRES` | `false` | 启用 postgres 服务 |
 | `APP_DEPENDS_ON_NGINX` | `false` | app depends_on nginx |
@@ -87,20 +94,34 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
 
 ## 主要设计点
 
-- **install.sh + compose 模板（.tpl）**：src 包内的 compose 文件名为
-  `docker-compose.yml.tpl`（不会被 docker compose 自动发现 / 被 `-f` 误用，
-  与用户自己的 compose 配置隔离——compose 对 ports 等列表合并只做并集）。
-  `install.sh <应用根目录>` 解压 src 到 `<根>/docs/devcontainer/`，把模板
-  **原样复制**到应用根目录为 `docker-compose.yml`（仅去掉 `.tpl` 后缀，不做
-  渲染），并在缺少 main.py 时放置占位入口（保证 `make up` 开箱即用）。
-  模板内 `${SRC_ROOT:-./}`（默认 `./` = 项目根目录，挂载为 /app）与
+- **install.sh + 根目录操作文件**：install.sh 先做全部前置检查再写盘（docs/
+  devcontainer 不存在、compose 与根目录操作文件无同名冲突），然后：解压 src
+  到 `<根>/docs/devcontainer/`（**原始副本**，仅用于把改坏的根目录文件复制回
+  重置，不在该目录运行脚本）；把 compose 模板原样复制到项目根为
+  `docker-compose.yml`（仅去掉 `.tpl` 后缀，不做渲染）；把 `Makefile` /
+  `build.sh` / `Dockerfile.addon`（改名 `Dockerfile`）/ `README.md`（改名
+  `README-devcontainer.md`）复制到项目根，安装/合并 `.dockerignore` 与
+  `.gitignore`（已存在时仅追加缺失条目）；创建 `<根>/wheels/requirements.txt`
+  离线安装头（`--no-index --find-links=./`，pip 按该文件所在目录解析相对
+  find-links）；缺少 main.py 且 prod_command 为默认值时放置占位入口。
+  Makefile/build.sh 的全部路径按**执行时 pwd** 解析，原始副本与根目录文件
+  可互换。模板内 `${SRC_ROOT:-./}`（默认 `./` = 项目根目录，挂载为 /app）与
   `${SRC_ROOT_NAME:-app}`（compose 项目名后缀）由 docker compose 运行时解析。
-- **离线补装（build.sh + Dockerfile.addon）**：src 包附带 addon 机制——把
-  wheel 放到 `<应用根目录>/wheels/`，`bash build.sh` 基于现有镜像逐个
+- **离线补装（build.sh + Dockerfile.addon→根目录 Dockerfile）**：wheel 放
+  项目根 `wheels/`，项目根执行 `bash build.sh` 基于现有镜像逐个
   `docker build --target` 生成 `<前缀>:<stage>-addon-<时间戳>` 新镜像。wheel
   复制到镜像 `/tmp/addon-wheels` 后在同一 RUN 层内安装并删除（不增大镜像）；
-  构建上下文为临时目录（只含 wheels），构建后自动清理。回滚 = 重新 docker load
-  原 `devcontainer-docker-images_<时间戳>.tgz`。
+  构建上下文为临时目录 `.addon-build`（只含 wheels，不受根目录 .dockerignore
+  排除 wheels/ 影响），构建后自动清理。wheels/requirements.txt 含真实包名才
+  按清单装，否则装目录下全部 `*.whl`（空清单不会静默 no-op）。回滚 = 重新
+  docker load 原 `devcontainer-docker-images_<时间戳>.tgz`。
+- **预装组件（勾选项）**：`enable_lucide` → 追加 pip 包 `lucide`（纯 Python
+  wheel，Django/Jinja 模板渲染 lucide.dev SVG 图标）；`enable_oracle_instantclient`
+  → Dockerfile 注入 Oracle Instant Client 19.19 安装块（bookworm libaio1、
+  TARGETARCH 分架构官方直链下载、ELF 机器类型校验，参照
+  github.com/wl-xiang/oracle2excel 生产验证实现）并追加 `oracledb==2.5.1`。
+  两者的 pip 包并入 requirements.txt 与 pip download（用户显式列出同名包时
+  以用户声明为准），环境变量与 workflow inputs 一一对应。
 - **多阶段 Dockerfile**：`prod`（运行时）与 `dev`（`FROM prod` + ruff/pytest
   等工具）在同文件内分阶段构建，compose 通过 `target` 区分；dev 服务挂
   `profiles: [dev]`，仅 `make shell/lint/test` 激活，不影响 `make up`。
@@ -125,8 +146,9 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   （bundle zip / 镜像归档 tgz / src tgz）统一使用 UTC+8 时间戳。
 - **唯一 Artifact**：`devcontainer-bundle_<时间戳>` 一个 zip 内含
   `devcontainer-docker-images_<时间戳>.tgz`（docker save 直出 gzip，docker
-  load 用）、`devcontainer-src_<时间戳>.tgz` 与 `install.sh` 三个文件；
-  "Bundle" 专指该外部 zip，镜像归档文件名用 "Docker Images"。
+  load 用）、`devcontainer-src_<时间戳>.tgz`、`install.sh` 与 `readme.txt`
+  四个文件；"Bundle" 专指该外部 zip，镜像归档文件名用 "Docker Images"。
+  安装方式：zip 放项目根 `dist/` 解压后 `bash install.sh ../`。
 - **glibc 语义**：基础镜像固定 slim-bookworm（glibc 2.36），glibc 参数仅决定
   pip download 请求的 manylinux 标签集合（目标 glibc 及以下全部标签）。
 - **YAML 安全**：compose 中的 `command` 与 `volumes` 挂载路径使用
