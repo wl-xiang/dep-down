@@ -253,6 +253,49 @@ jobs:
           tar tvzf "${{ steps.build.outputs.src_tgz }}" devcontainer-src/build.sh \
             | grep -q '^-[rwx-]*x' \
             || { echo "::error::src 包内 build.sh 无可执行权限"; exit 1; }
+          # 回归测试（离线补装）：模拟 install.sh 的根目录布局
+          # （Dockerfile.addon 改名 Dockerfile、安装根目录 .dockerignore、
+          #  wheels/ 放 dummy wheel），用 mock docker 干跑 build.sh，断言每次
+          # 构建调用的上下文只含 wheels 且无任何 dockerignore——确保项目根
+          # .dockerignore 排除 wheels/ 不会导致离线补装（COPY wheels/）失败
+          echo "--- build.sh addon dry-run (mock docker) ---"
+          TESTROOT=$(mktemp -d /tmp/addon-dryrun.XXXXXX)
+          mkdir -p "$TESTROOT/root/docs/devcontainer" "$TESTROOT/bin" "$TESTROOT/root/wheels"
+          tar xzf "${{ steps.build.outputs.src_tgz }}" -C "$TESTROOT/root/docs/devcontainer" --strip-components=1
+          # 模拟 install.sh 的根目录布局：Dockerfile.addon 改名 Dockerfile、build.sh 复制到根
+          cp "$TESTROOT/root/docs/devcontainer/Dockerfile.addon" "$TESTROOT/root/Dockerfile"
+          cp "$TESTROOT/root/docs/devcontainer/build.sh" "$TESTROOT/root/build.sh"
+          cp "$TESTROOT/root/docs/devcontainer/.dockerignore" "$TESTROOT/root/.dockerignore"
+          touch "$TESTROOT/root/wheels/dummy-1.0-py3-none-any.whl"
+          cat > "$TESTROOT/bin/docker" <<'MOCK'
+          #!/usr/bin/env bash
+          # mock docker：记录调用参数，并当场校验 build.sh 传入的构建上下文
+          ctx="${*: -1}"
+          echo "docker $*" >> "${MOCK_LOG:?}"
+          [ "$1" = "build" ] || exit 0
+          if [ -e "$ctx/.dockerignore" ] || [ -e "$ctx/Dockerfile.dockerignore" ]; then
+              echo "::error::补装构建上下文不应包含 dockerignore: $ctx" >&2
+              exit 1
+          fi
+          ls "$ctx"/wheels/*.whl >/dev/null 2>&1 \
+              || { echo "::error::补装构建上下文缺少 wheels/*.whl: $ctx" >&2; exit 1; }
+          exit 0
+          MOCK
+          chmod +x "$TESTROOT/bin/docker"
+          # build.sh 按执行时 pwd 解析路径，须在项目根目录内运行
+          (
+            cd "$TESTROOT/root"
+            MOCK_LOG="$TESTROOT/docker.log" PATH="$TESTROOT/bin:$PATH" \
+              bash ./build.sh dryrun-addon > /dev/null
+          )
+          grep -q '^docker build ' "$TESTROOT/docker.log" \
+            || { echo "::error::build.sh 未发起任何 docker build 调用"; exit 1; }
+          grep -Fq -- "-f $TESTROOT/root/Dockerfile " "$TESTROOT/docker.log" \
+            || { echo "::error::build.sh 未使用根目录 Dockerfile（Dockerfile.addon 改名）"; exit 1; }
+          grep -q 'COPY wheels/ /tmp/addon-wheels/' "$TESTROOT/root/Dockerfile" \
+            || { echo "::error::根目录 Dockerfile 不是 addon 版（缺少 COPY wheels）"; exit 1; }
+          rm -rf "$TESTROOT"
+          echo "addon dry-run OK: 构建上下文只含 wheels，未受根目录 .dockerignore 影响"
           echo "--- ${{ steps.build.outputs.images_name }} (docker load 用镜像归档) ---"
           # 镜像归档是 gzip 压缩的镜像归档：根目录必须能直接看到 manifest.json（或 OCI index.json）
           tar tzf "${{ steps.build.outputs.images_tgz }}" > /tmp/images.list

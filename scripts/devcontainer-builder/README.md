@@ -111,10 +111,13 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   项目根 `wheels/`，项目根执行 `bash build.sh` 基于现有镜像逐个
   `docker build --target` 生成 `<前缀>:<stage>-addon-<时间戳>` 新镜像。wheel
   复制到镜像 `/tmp/addon-wheels` 后在同一 RUN 层内安装并删除（不增大镜像）；
-  构建上下文为临时目录 `.addon-build`（只含 wheels，不受根目录 .dockerignore
-  排除 wheels/ 影响），构建后自动清理。wheels/requirements.txt 含真实包名才
+  构建上下文为临时目录 `.addon-build`（只含 wheels——docker 只按上下文根目录
+  查找 .dockerignore，故不受根目录排除 wheels/ 影响；build.sh 还会显式清理
+  上下文内任何 dockerignore 双保险），构建后自动清理。wheels/requirements.txt 含真实包名才
   按清单装，否则装目录下全部 `*.whl`（空清单不会静默 no-op）。回滚 = 重新
-  docker load 原 `devcontainer-docker-images_<时间戳>.tgz`。
+  docker load 原 `devcontainer-docker-images_<时间戳>.tgz`。workflow 的
+  Verify 步骤含 mock docker 干跑回归测试，持续断言补装上下文不受
+  .dockerignore 影响。
 - **预装组件（勾选项）**：`enable_lucide` → 追加 pip 包 `lucide`（纯 Python
   wheel，Django/Jinja 模板渲染 lucide.dev SVG 图标）；`enable_oracle_instantclient`
   → Dockerfile 注入 Oracle Instant Client 19.19 安装块（bookworm libaio1、

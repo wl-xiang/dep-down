@@ -184,15 +184,16 @@ def _oracle_block(p):
 def _install_block(local_wheels, req_path="requirements.txt"):
     if local_wheels:
         return (
-            "# wheels 同时保留在镜像内，离线环境可在容器内继续安装:\n"
-            "#   pip install --no-index --find-links=/wheels <pkg>\n"
-            "COPY wheels/ /wheels/\n"
+            "# wheels 经 BuildKit bind mount 只读挂载参与安装，不复制进任何镜像层：\n"
+            "# 运行容器内没有 wheels（离线补装请用项目根目录 build.sh / Dockerfile.addon）\n"
             f"COPY {req_path} /app/requirements.txt\n"
             "\n"
-            "RUN pip install --no-index --find-links=/wheels -r /app/requirements.txt\n"
+            "RUN --mount=type=bind,source=wheels,target=/mnt/wheels \\\n"
+            "    pip install --no-index --find-links=/mnt/wheels -r /app/requirements.txt\n"
         )
     return (
-        "# 发布包不含 wheels/（已装进镜像），重建时从 pip 源在线安装\n"
+        "# 发布包不含 wheels/（wheel 仅在构建时经 bind mount 安装，不落镜像层），\n"
+        "# 重建时从 pip 源在线安装\n"
         f"COPY {req_path} /app/requirements.txt\n"
         "\n"
         "RUN pip install -r /app/requirements.txt\n"
@@ -203,8 +204,9 @@ def _dev_pip_block(p, local_wheels):
     tools = " ".join(p.dev_pip_tools)
     if local_wheels:
         return (
-            "# dev 工具的 wheel 已随 wheels/ 一起下载，离线仍可安装\n"
-            f"RUN pip install --no-index --find-links=/wheels {tools}\n"
+            "# dev 工具的 wheel 已随 wheels/ 一起下载，同样经 bind mount 安装，不落镜像层\n"
+            "RUN --mount=type=bind,source=wheels,target=/mnt/wheels \\\n"
+            f"    pip install --no-index --find-links=/mnt/wheels {tools}\n"
         )
     return (
         "# 发布包不含 wheels/，重建时从 pip 源在线安装\n"
@@ -453,8 +455,10 @@ def render_all(p, staging):
         # 离线补装：wheel 打进现有镜像生成 addon 镜像
         "Dockerfile.addon": render_dockerfile_addon(p),
         "build.sh": render_build_sh(p),
-        # 随 install.sh 安装/合并到项目根目录（src root）
-        ".dockerignore": render_dockerignore(p),
+        # .gitignore 随 install.sh 安装/合并到项目根目录（src root）。
+        # 注意：.dockerignore 不能在这里写入——staging 即 CI 构建上下文，
+        # 其 wheels/ 排除规则会让构建期的 wheels 引用失败；
+        # 它在 docker 构建完成后由 main.py 写入，仅供 src 产物分发
         ".gitignore": render_gitignore(p),
     }
     for name, content in files.items():

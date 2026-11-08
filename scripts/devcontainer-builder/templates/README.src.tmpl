@@ -88,12 +88,12 @@ make down         # 停止
   `<镜像前缀>:<stage>-addon-{{TS}}` 新镜像（wheel 只在构建层临时存在，不会
   增大镜像体积），按输出的 sed 命令切换项目根目录的 `docker-compose.yml`
   即可。详见下文「离线补装 Python 包」。
-- 本包**不含 `wheels/`**：所有 wheel 已在构建镜像时安装，并固化在镜像
-  `/wheels` 内。容器内离线安装额外依赖：
-  `pip install --no-index --find-links=/wheels <pkg>`（需 root，即
-  `HOST_UID=0` 运行）；或把 wheel 放入项目根目录 `wheels/` 后
-  `pip install -r wheels/requirements.txt <pkg>`（离线安装头已由 install.sh
-  预置，`--find-links=./` 自动指向 wheels/ 所在目录）。
+- 本包**不含 `wheels/`**：所有 wheel 已在构建镜像时安装（构建端经 BuildKit
+  bind mount 参与安装，不占用镜像体积，运行容器内没有 wheels）。离线安装
+  额外依赖请用 `build.sh` 补装（见下文）；临时应急可把 wheel 放入项目根
+  目录 `wheels/` 后 `pip install -r wheels/requirements.txt <pkg>`
+  （离线安装头已由 install.sh 预置，`--find-links=./` 自动指向 wheels/
+  所在目录；此方式装进容器可写层，重建容器后失效，持久生效仍需 build.sh）。
 - `make build` 需要联网（apt/pip 源），离线机器请勿使用；镜像请统一通过
   `devcontainer-docker-images_{{TS}}.tgz` 导入。
 - `make check` 可离线自检镜像是否已导入、架构是否匹配。
@@ -125,6 +125,7 @@ make up && make logs
 - `wheels/requirements.txt` 含真实包名时按清单装；只有离线安装头（
   install.sh 预置的状态）时，安装目录下全部 `*.whl`。
 - build.sh 的构建上下文是临时目录 `.addon-build`（只含 wheels），不会把
-  整个项目目录发给 docker daemon，也不受根目录 `.dockerignore` 影响；
-  构建结束自动清理。
+  整个项目目录发给 docker daemon，也不受根目录 `.dockerignore`（排除
+  wheels/）影响——docker 只按上下文根目录查找 `.dockerignore`，且 build.sh
+  会显式清理上下文内的任何 dockerignore 双保险；构建结束自动清理。
 - 回滚：重新 `docker load -i devcontainer-docker-images_{{TS}}.tgz` 即可恢复原镜像。

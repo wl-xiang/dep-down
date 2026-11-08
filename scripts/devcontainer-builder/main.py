@@ -96,10 +96,17 @@ def main():
         docker_mod.save_images(images, images_tgz)
 
     # 4. 打包产物
-    # wheels/ 已在镜像构建阶段装入（镜像内 /wheels），不再随 src 产物分发；
-    # 同时把 Dockerfile 改写为不含 wheels/ 的联网重建版本，避免引用不存在的目录
+    # wheels/ 已在镜像构建阶段安装（BuildKit bind mount，不落入任何镜像层），
+    # 不再随 src 产物分发；同时把 Dockerfile 改写为不含 wheels/ 的联网重建版本，
+    # 避免引用不存在的目录
     shutil.rmtree(staging / "wheels", ignore_errors=True)
     render_mod.render_src_dockerfile(p, staging)
+    # .dockerignore 供 src 产物分发（install.sh 安装/合并到用户项目根目录）。
+    # 必须在 docker 构建之后才写入：staging 即构建上下文，若在构建前写入，
+    # 其 wheels/ 排除规则会导致构建期引用 wheels 失败（Copy ignored file）
+    (staging / ".dockerignore").write_text(
+        render_mod.render_dockerignore(p), encoding="utf-8"
+    )
     src_tgz = REPO_ROOT / "dist" / f"devcontainer-src_{p.ts}.tgz"
     package_mod.make_src_tgz(staging, src_tgz)
     print(f"== src 产物: {src_tgz} "

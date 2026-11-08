@@ -146,8 +146,9 @@ src 包内**只有 `docker-compose.yml.tpl` 模板，不包含渲染后的
 两个环境变量由 docker compose 在运行时以 `:-` 默认值语法解析（默认
 `./` = 项目根目录、项目名后缀 `app`）。
 
-`wheels/` 不再随源码包分发：所有 wheel 已在镜像构建阶段安装，并固化在镜像
-`/wheels` 内，内网可直接在容器中离线安装（见「prod / dev 镜像」）。
+`wheels/` 不再随源码包分发：所有 wheel 已在镜像构建阶段安装（云端构建经
+BuildKit bind mount 参与，不落入任何镜像层），运行容器内没有 wheels；
+离线补装见「离线补装 Python 包」。
 
 ### install.sh
 
@@ -249,9 +250,12 @@ make up && make logs
   离线安装头（install.sh 预置的初始状态）时，安装目录下全部 `*.whl`——
   只扔 wheel 进目录、不改 requirements 也能直接补装。
 - 构建上下文是临时目录 `.addon-build`（只含 wheels），不会把整个项目目录
-  发给 docker daemon，也不受项目根目录 `.dockerignore`（排除 wheels/）
-  影响；构建结束自动清理。请勿在项目根目录直接 `docker build .`——那会把
-  整个项目作为上下文，且 `wheels/` 已被 .dockerignore 排除导致 COPY 失败。
+  发给 docker daemon。docker 只按**上下文根目录**查找 `.dockerignore`，因此
+  项目根目录那份（排除 wheels/）不会作用于补装构建；build.sh 还会显式清理
+  上下文内的任何 dockerignore（双保险），云端每次构建也在 Verify 步骤用
+  mock docker 干跑回归测试断言这一点。构建结束临时目录自动清理。请勿在
+  项目根目录直接 `docker build .`——那会把整个项目作为上下文，且 `wheels/`
+  已被 .dockerignore 排除导致 COPY 失败。
 - 回滚：重新 `docker load -i devcontainer-docker-images_<时间戳>.tgz` 即可
   恢复原镜像。
 
@@ -342,7 +346,8 @@ make up && make logs
 - `.dockerignore` / `.gitignore` 安装到项目根目录（已存在时仅追加缺失
   条目）：`dist/`（bundle 产物）、`wheels/`（离线补装 wheel）、
   `.addon-build/`（补装构建临时目录）等不进入 docker 构建上下文/不误提交
-  git。wheels 已固化在镜像 `/wheels` 内，无需随上下文或 git 分发。
+  git。wheels 构建时已装进镜像（不落层、不进入运行容器），无需随上下文或
+  git 分发。
 - install.sh 还会创建 `<项目根>/wheels/requirements.txt` 离线安装头
   （`--no-index --find-links=./`）：pip 对 requirements 文件内的相对
   `--find-links` 按**该文件所在目录**解析，因此把 wheel 放进 `wheels/` 后，
@@ -389,9 +394,9 @@ make up && make logs
   compose 的 app 服务直接引用该 dev 镜像并显式写入 `command`（镜像 CMD 为
   bash），`make up` 与 `make shell/lint/test` 共用同一个镜像；镜像归档中也
   只保存这一个镜像。
-- `wheels/` 在构建时被复制到镜像 `/wheels` 并保留下来（构建上下文中的
-  `wheels/` 不会进入发布包），内网可在容器内继续离线安装：
-  `pip install --no-index --find-links=/wheels <pkg>`。
+- `wheels/` 仅在构建时经 BuildKit bind mount 参与安装，不复制进任何镜像层
+  （构建上下文中的 `wheels/` 不会进入发布包，运行容器内也没有 wheels）；
+  内网补装新包走 `build.sh`（见「离线补装 Python 包」）。
 
 ### 依赖下载
 
@@ -401,8 +406,9 @@ make up && make logs
 - **业务依赖必须在 `pip_packages` 中显式列出**（构建端拿不到业务代码，无法
   自动解析业务 `requirements.txt`）。漏装会在离线运行时表现为
   `ModuleNotFoundError`；此时可用 `build.sh` 离线补装（见「离线补装
-  Python 包」），或临时在容器内 `pip install --no-index --find-links=/wheels
-  <pkg>`。
+  Python 包」），或临时把 wheel 放入项目根 `wheels/` 后在容器内
+  `pip install -r wheels/requirements.txt <pkg>`（仅当前容器生效，
+  重建容器即失效）。
 
 ## FAQ
 
