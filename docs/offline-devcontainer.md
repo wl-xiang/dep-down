@@ -16,7 +16,7 @@ pip download → wheels/
 docker build (prod → dev / 仅 dev)         docker load bundle tgz
 docker pull (nginx/postgres, 按需)         bash install.sh <应用根目录>
 打包 src tgz + bundle tgz + install.sh     → <应用根>/docs/devcontainer/
-────────── 传输（3 个 Artifacts）────────→  cd <应用根>/docs/devcontainer
+────────── 传输（2 个 Artifacts）────────→  cd <应用根>/docs/devcontainer
 上传 Artifacts + 写 Summary                make check / shell / lint / compile / test
                                            make up (python main.py)
 ```
@@ -34,10 +34,10 @@ docker pull (nginx/postgres, 按需)         bash install.sh <应用根目录>
 
 1. 进入 Fork 后的仓库，点击 **Actions** → 左侧选择 **Build DevContainer** →
    **Run workflow**。
-2. 填写参数后运行。运行完成后在 **Summary** 底部 **Artifacts** 下载三个产物：
-   - `devcontainer-src_<时间戳>.tgz`：运行时源码包（compose 模板、Makefile 等）
+2. 填写参数后运行。运行完成后在 **Summary** 底部 **Artifacts** 下载两个产物：
+   - `devcontainer-src_<时间戳>.tgz`：运行时源码包 + 安装脚本（Artifact 解压得到
+     `install.sh` 与 `devcontainer-src_<时间戳>.tgz` 两个文件，把两者放到同一目录）
    - `devcontainer-bundle_<时间戳>.tgz`：镜像 Bundle 包
-   - `install.sh`：安装脚本（把 src 包安装到应用根目录的 `docs/devcontainer/`）
 
    > Artifacts 只能是 zip 封装，工作流已设置 `compression-level: 0`（仅存储、
    > 不再二次压缩），解压 zip 即得到产物文件。
@@ -92,14 +92,13 @@ docker pull (nginx/postgres, 按需)         bash install.sh <应用根目录>
 ```
 devcontainer-src/
 ├── Dockerfile                   # 多阶段 prod/dev；仅 dev 镜像模式下为单阶段 dev
-├── docker-compose.yaml.tpl      # compose 模板（install.sh 渲染为 docker-compose.yaml）
+├── docker-compose.yml.tpl       # compose 模板（install.sh 渲染为 docker-compose.yaml）
 ├── Makefile                     # check/up/down/shell/lint/compile/test 等
 ├── main.py                      # 占位入口（应用根目录无 main.py 时由 install.sh 复制）
 ├── requirements.txt             # pip 包清单
 ├── Dockerfile.addon             # 离线补装：基于现有镜像把 wheels/ 打进 addon 镜像
 ├── build.sh                     # 离线补装入口（docker build Dockerfile.addon）
 ├── nginx/conf.d/                # 仅 enable_nginx 且指定 app_port 时生成反代配置
-├── scripts/                     # 仓库随附的离线下载工具（pip/npm）
 └── README.md                    # 快速上手说明
 ```
 
@@ -108,7 +107,8 @@ devcontainer-src/
 
 ### install.sh
 
-安装脚本（独立 Artifact）。把本脚本与 src tgz 放在同一目录，执行：
+安装脚本（与 src tgz 同在 src Artifact 的 zip 内，解压后把两者放到同一目录）。
+执行：
 
 ```bash
 bash install.sh ~/apps/myapp1        # 参数 = 你的项目根目录
@@ -118,7 +118,7 @@ bash install.sh ~/apps/myapp1        # 参数 = 你的项目根目录
 
 1. 在 `<项目根>/docs/devcontainer/` 下解压 src 包（目录已存在则报错，
    避免新旧版本混装；重新安装请先删除该目录）；
-2. 渲染 `docker-compose.yaml.tpl` → `docker-compose.yaml`：`{{SRC_ROOT}}`
+2. 渲染 `docker-compose.yml.tpl` → `docker-compose.yaml`：`{{SRC_ROOT}}`
    占位符替换为项目根目录**绝对路径**（挂载为容器 `/app`），并按项目目录名
    生成 compose 项目名（如 `devcontainer-myapp1`）；
 3. 项目根目录没有 `main.py` 且启动命令为默认的 `python main.py` 时，复制
@@ -140,8 +140,8 @@ TAG 一致；Summary 中同时给出 SHA256，便于校验传输完整性。
 ## 内网使用步骤
 
 ```bash
-# 1. 下载三个 Artifacts（各自解压 zip），放到同一目录：
-#    install.sh  devcontainer-src_<ts>.tgz  devcontainer-bundle_<ts>.tgz
+# 1. 下载两个 Artifacts（各自解压 zip），install.sh 与 src tgz（src Artifact
+#    解压得这两个文件）与 bundle tgz 放到同一目录：
 
 # 2. 导入镜像
 docker load -i devcontainer-bundle_20260101-120000.tgz
@@ -171,7 +171,8 @@ make down       # 停止
 无需重新跑一次 Action：
 
 ```bash
-# 1. 联网机器：下载缺的包为 wheel（docs/devcontainer/scripts/pip/ 即本工具）
+# 1. 联网机器：下载缺的包为 wheel（仓库 scripts/pip/ 即本工具，
+#    或直接使用仓库的 Pip Download Action）
 python scripts/pip/pip_download.py <包名...> -d /tmp/wheels
 #    产物含 *.whl 和带 --no-index 头的 requirements.txt
 #    把 /tmp/wheels 整个目录拷回内网 <应用根目录>/wheels/
@@ -245,7 +246,7 @@ make up && make logs
 
 ### install.sh 与 compose 模板（.tpl）
 
-- src 包内的 compose 文件名为 `docker-compose.yaml.tpl`：`.tpl` 后缀保证它
+- src 包内的 compose 文件名为 `docker-compose.yml.tpl`：`.tpl` 后缀保证它
   不会被 docker compose 自动发现，也不会被 `-f` 误用。compose 多文件合并对
   `ports` 等列表只做**并集**（无法通过 override 移除），`*.override.yaml`
   自动合并也会产生同样的问题——隔离后，devcontainer 的 compose 与应用根目录

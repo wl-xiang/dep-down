@@ -7,7 +7,7 @@
 #
 # 作用：
 #   1. 在 <project-root>/docs/devcontainer 下解压 devcontainer-src_{{TAG}}.tgz
-#   2. 渲染 docker-compose.yaml.tpl -> docker-compose.yaml：
+#   2. 渲染 docker-compose.yml.tpl -> docker-compose.yaml：
 #      {{SRC_ROOT}}      -> <project-root> 绝对路径（挂载为容器 /app）
 #      {{SRC_ROOT_NAME}} -> <project-root> 目录名（拼 compose 项目名）
 #   3. 若 <project-root> 没有 main.py 且启动命令为默认值，复制占位 main.py
@@ -60,8 +60,8 @@ fi
 mkdir -p "$DEST"
 tar xzf "$TGZ" -C "$DEST" --strip-components=1
 
-TPL="$DEST/docker-compose.yaml.tpl"
-[ -f "$TPL" ] || { echo "错误: 包内缺少 docker-compose.yaml.tpl: $TPL"; exit 1; }
+TPL="$DEST/docker-compose.yml.tpl"
+[ -f "$TPL" ] || { echo "错误: 包内缺少 docker-compose.yml.tpl: $TPL"; exit 1; }
 
 # compose 项目名：<目录名> 规范化为 [a-z0-9][a-z0-9_-]*
 SRC_ROOT_NAME=$(basename "$SRC_ROOT" | tr '[:upper:]' '[:lower:]' \

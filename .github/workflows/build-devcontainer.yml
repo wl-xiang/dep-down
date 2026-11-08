@@ -179,8 +179,8 @@ jobs:
           head -30 /tmp/src_tgz.list
           echo "... $(wc -l < /tmp/src_tgz.list) entries total"
           # install.sh 依赖的关键文件必须存在
-          grep -q 'devcontainer-src/docker-compose.yaml.tpl$' /tmp/src_tgz.list \
-            || { echo "::error::src 包缺少 docker-compose.yaml.tpl"; exit 1; }
+          grep -q 'devcontainer-src/docker-compose.yml.tpl$' /tmp/src_tgz.list \
+            || { echo "::error::src 包缺少 docker-compose.yml.tpl"; exit 1; }
           grep -q 'devcontainer-src/main.py$' /tmp/src_tgz.list \
             || { echo "::error::src 包缺少占位 main.py"; exit 1; }
           # 离线补装机制（build.sh + Dockerfile.addon）
@@ -221,26 +221,21 @@ jobs:
             echo "bundle artifact skipped (DEVCONTAINER_SKIP_DOCKER was set)"
           fi
 
-      # Artifacts 只能是 zip 封装：设 compression-level 0 让 zip 只做存储，
-      # 避免 tgz 再被 zip 二次压缩，解压后即得唯一的 tgz 产物
-      - name: Upload src artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.build.outputs.src_name }}
-          path: ${{ steps.build.outputs.src_tgz }}
-          compression-level: 0
-          if-no-files-found: error
-
       # 安装脚本：构建时已 chmod 755，此处显式再确认一次
       # （注：artifact zip 解压后可能丢失 +x，文档统一引导用户 bash install.sh 调用）
       - name: Make install.sh executable
         run: chmod +x "${{ steps.build.outputs.install_sh }}"
 
-      - name: Upload install script artifact
+      # Artifacts 只能是 zip 封装：设 compression-level 0 让 zip 只做存储，
+      # 避免 tgz 再被 zip 二次压缩。src artifact 同时包含 src tgz 与 install.sh
+      # 两个文件（均在 dist/ 下，zip 解压后即得这两个文件），加上 bundle 共两个产物
+      - name: Upload src artifact (src tgz + install.sh)
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.build.outputs.install_name }}
-          path: ${{ steps.build.outputs.install_sh }}
+          name: ${{ steps.build.outputs.src_name }}
+          path: |
+            ${{ steps.build.outputs.src_tgz }}
+            ${{ steps.build.outputs.install_sh }}
           compression-level: 0
           if-no-files-found: error
 

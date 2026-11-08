@@ -118,10 +118,10 @@ def build_markdown(p, results):
 
     out.append("### 内网使用步骤")
     out.append("")
-    out.append("1. 从本次运行页面底部 **Artifacts** 下载三个产物"
-               "（`install` 脚本、`src` 与 `bundle`；zip 仅为封装、不压缩，"
-               "解压即得文件），传输到与目标平台一致的内网机器，"
-               "并用上表 SHA256 校验完整性。")
+    out.append("1. 从本次运行页面底部 **Artifacts** 下载两个产物"
+               "（`src` 与 `bundle`；zip 仅为封装、不压缩，解压即得文件；"
+               "src 解压后得到 `install.sh` 与 src tgz 两个文件），"
+               "传输到与目标平台一致的内网机器，并用上表 SHA256 校验完整性。")
     out.append("2. 导入镜像（tgz 是 gzip 压缩的镜像归档，可直接 load）:")
     out.append("")
     out.append("```bash")
@@ -210,7 +210,6 @@ def emit(p, results):
             entries.append(("src_sha256", sha256_of(src_tgz)))
         if install_sh:
             entries.append(("install_sh", str(install_sh)))
-            entries.append(("install_name", f"devcontainer-install_{p.tag}"))
             entries.append(("install_sha256", sha256_of(install_sh)))
         if bundle_tgz:
             entries.append(("bundle_tgz", str(bundle_tgz)))

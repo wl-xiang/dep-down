@@ -27,7 +27,7 @@ scripts/devcontainer-builder/
     ├── Makefile.tmpl              # make 目标（check/up/shell/lint/compile/test 等）
     ├── requirements.txt.tmpl      # pip 包清单
     ├── main.py.tmpl               # 占位入口（install.sh 在应用根目录无 main.py 时复制）
-    ├── install.sh.tmpl            # 安装脚本（独立 artifact，不进 src tgz）
+    ├── install.sh.tmpl            # 安装脚本（与 src tgz 同打成一个 src artifact，不进 tgz）
     ├── Dockerfile.addon.tmpl      # 离线补装：基于现有镜像生成 addon 阶段（wheels 进 /tmp 同层删）
     ├── build.sh.tmpl              # 离线补装入口（docker build Dockerfile.addon，默认 addon-<TAG>）
     └── README.src.tmpl            # src 产物内的快速上手说明
@@ -87,7 +87,7 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
 ## 主要设计点
 
 - **install.sh + compose 模板（.tpl）**：src 包内的 compose 文件名为
-  `docker-compose.yaml.tpl`（不会被 docker compose 自动发现 / 被 `-f` 误用，
+  `docker-compose.yml.tpl`（不会被 docker compose 自动发现 / 被 `-f` 误用，
   与用户自己的 compose 配置隔离——compose 对 ports 等列表合并只做并集）。
   `install.sh <应用根目录>` 解压 src 到 `<根>/docs/devcontainer/`，把
   `{{SRC_ROOT}}` 渲染为根目录绝对路径（挂载为 /app）、生成 compose 项目名，

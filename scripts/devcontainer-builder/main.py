@@ -3,12 +3,12 @@
 
 执行序列（对应计划书 4.6）:
     1. 读取环境变量 → lib/params.py 解析与校验
-    2. lib/render.py 渲染 Dockerfile / docker-compose.yaml.tpl / Makefile /
+    2. lib/render.py 渲染 Dockerfile / docker-compose.yml.tpl / Makefile /
        requirements.txt / main.py 占位 / install.sh
     3. lib/pip.py 复用 pip_download 逻辑下载 wheels/
     4. lib/docker.py buildx 构建 prod(/dev)、拉取外挂镜像、docker save 直出 gzip
     5. lib/package.py 打包 devcontainer-src_<ts>.tgz；bundle 已在上一步直出；
-       install.sh 作为独立产物写入 dist/（不进 src tgz）
+       install.sh 写入 dist/（与 src tgz 同打成一个 src artifact zip，不进 tgz）
     6. lib/summary.py 写 GITHUB_STEP_SUMMARY / GITHUB_OUTPUT
 
 本地联调可设置 DEVCONTAINER_SKIP_DOCKER=1 跳过 docker 步骤。
@@ -95,7 +95,6 @@ def main():
     # 同时把 Dockerfile 改写为不含 wheels/ 的联网重建版本，避免引用不存在的目录
     shutil.rmtree(staging / "wheels", ignore_errors=True)
     render_mod.render_src_dockerfile(p, staging)
-    package_mod.copy_repo_scripts(staging)
     src_tgz = REPO_ROOT / "dist" / f"devcontainer-src_{p.tag}.tgz"
     package_mod.make_src_tgz(staging, src_tgz)
     print(f"== src 产物: {src_tgz} "

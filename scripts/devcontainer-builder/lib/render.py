@@ -396,7 +396,7 @@ def render_all(p, staging):
         "Dockerfile": render_dockerfile(p),
         # .tpl 后缀：不会被 docker compose 自动发现/被 -f 误用，
         # 由 install.sh 渲染为 docker-compose.yaml（{{SRC_ROOT}} -> 应用根目录）
-        "docker-compose.yaml.tpl": render_compose(p),
+        "docker-compose.yml.tpl": render_compose(p),
         "Makefile": render_makefile(p),
         "requirements.txt": render_requirements(p),
         "main.py": render_main_py(),
