@@ -3,11 +3,11 @@
 # 离线使用：镜像已由 bundle 导入，pull_policy=never + make up --no-build 不会触发任何联网。
 services:
   app:
-    image: {{IMAGE_PREFIX}}-prod:{{TAG}}
+    image: {{APP_IMAGE}}
     build:
       context: .
       dockerfile: Dockerfile
-      target: prod
+      target: {{APP_BUILD_TARGET}}
     working_dir: /app
     restart: unless-stopped
     pull_policy: never
@@ -16,7 +16,7 @@ services:
       - {{APP_VOLUME}}
     networks:
       - app-net
-{{APP_OPTIONS_BLOCK}}{{DEPENDS_ON_BLOCK}}{{DEV_SERVICE_BLOCK}}{{SERVICE_BLOCKS}}
+{{APP_COMMAND_BLOCK}}{{APP_OPTIONS_BLOCK}}{{DEPENDS_ON_BLOCK}}{{DEV_SERVICE_BLOCK}}{{SERVICE_BLOCKS}}
 networks:
   app-net: {}
 {{VOLUMES_BLOCK}}

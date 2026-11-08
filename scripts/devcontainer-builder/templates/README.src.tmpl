@@ -8,7 +8,7 @@
 | 平台 | {{DOCKER_PLATFORM}} |
 | Python | {{PYTHON_VERSION}} |
 | 镜像 TAG | `{{TAG}}` |
-| 镜像 | `{{IMAGE_PREFIX}}-prod` / `{{IMAGE_PREFIX}}-dev` |
+| 镜像 | {{IMAGE_SUMMARY}} |
 | 外挂服务 | {{SERVICES_SUMMARY}} |
 | pip 镜像源 | {{PIP_MIRROR}} |
 
@@ -60,4 +60,4 @@ make down         # 停止
 - `make build` 需要联网（apt/pip 源），离线机器请勿使用；镜像请统一通过 bundle 导入。
 - `make check` 可离线自检镜像是否已导入、架构是否匹配。
 - `make help` 查看全部可用目标。
-- {{DEV_TOOLS_NOTE}}
+{{DEV_TOOLS_NOTE}}

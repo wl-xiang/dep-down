@@ -80,6 +80,7 @@ class Params:
     app_depends_on_postgres: bool
     prod_command: str
     build_dev_image: bool
+    dev_image_only: bool
     image_prefix: str
     app_source_dir: str
     app_port: str
@@ -123,8 +124,13 @@ class Params:
         return self.apt_packages.split()
 
     @property
+    def dev_tools_enabled(self):
+        """是否需要 dev 阶段（仅 dev 镜像模式下唯一镜像即 dev 镜像）。"""
+        return self.dev_image_only or self.build_dev_image
+
+    @property
     def dev_pip_tools(self):
-        return list(DEV_PIP_TOOLS) if self.build_dev_image else []
+        return list(DEV_PIP_TOOLS) if self.dev_tools_enabled else []
 
     @property
     def prod_image(self):
@@ -135,11 +141,23 @@ class Params:
         return f"{self.image_prefix}-dev:{self.tag}"
 
     @property
+    def app_image(self):
+        """部署（app 服务）使用的镜像：仅 dev 镜像模式下直接用 dev 镜像。"""
+        return self.dev_image if self.dev_image_only else self.prod_image
+
+    @property
+    def app_build_target(self):
+        return "dev" if self.dev_image_only else "prod"
+
+    @property
     def image_refs(self):
         """本次导入/自检需要的镜像清单（与 docker.image_list 保持一致）。"""
-        images = [self.prod_image]
-        if self.build_dev_image:
-            images.append(self.dev_image)
+        if self.dev_image_only:
+            images = [self.dev_image]
+        else:
+            images = [self.prod_image]
+            if self.build_dev_image:
+                images.append(self.dev_image)
         if self.enable_nginx:
             images.append("nginx:stable")
         if self.enable_postgres:
@@ -185,6 +203,7 @@ def load():
         app_depends_on_postgres=_env_bool("APP_DEPENDS_ON_POSTGRES", False),
         prod_command=_env("PROD_COMMAND", "python main.py"),
         build_dev_image=_env_bool("BUILD_DEV_IMAGE", True),
+        dev_image_only=_env_bool("DEV_IMAGE_ONLY", False),
         image_prefix=_env("IMAGE_PREFIX", "devcontainer"),
         app_source_dir=_env("APP_SOURCE_DIR", "."),
         app_port=_env("APP_PORT", ""),

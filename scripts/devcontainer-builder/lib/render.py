@@ -15,7 +15,7 @@ TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 # compose 中的 dev 服务（profile=dev，仅 make shell/lint/compile/test 时激活）
 _DEV_SERVICE_TMPL = """\
   dev:
-    image: {{IMAGE_PREFIX}}-dev:{{TAG}}
+    image: {{DEV_IMAGE}}
     build:
       context: .
       dockerfile: Dockerfile
@@ -31,7 +31,7 @@ _DEV_SERVICE_TMPL = """\
       - dev
 """
 
-# Makefile 中依赖 dev 镜像的目标（build_dev_image=true 时生成）
+# Makefile 中依赖 dev 镜像的目标（需要 dev 工具时生成）
 _DEV_MAKE_TARGETS = """\
 check-dev: ## 检查 dev 镜像是否已导入（离线环境不会自行构建）
 \t@docker image inspect {{DEV_IMAGE}} >/dev/null 2>&1 || { \\
@@ -81,6 +81,8 @@ def _base_mapping(p):
         "PIP_MIRROR": p.pip_mirror,
         "MIRROR_URL": p.mirror_url,
         "IMAGE_PREFIX": p.image_prefix,
+        "APP_IMAGE": p.app_image,
+        "APP_BUILD_TARGET": p.app_build_target,
         "APP_SOURCE_DIR": p.app_source_dir,
         "APP_VOLUME": json.dumps(p.mount_path),
         "IMAGE_LIST": " ".join(p.image_refs),
@@ -143,21 +145,23 @@ def _dev_pip_block(p, local_wheels):
 
 
 def render_dockerfile(p, local_wheels=True):
+    base = {
+        **_base_mapping(p),
+        "APT_BLOCK": _apt_block(p.apt_package_list),
+        "CUSTOM_INSTALL_BLOCK": _custom_install_block(p.custom_install_cmd),
+        "INSTALL_BLOCK": _install_block(local_wheels),
+        "DEV_PIP_BLOCK": _dev_pip_block(p, local_wheels),
+    }
+    if p.dev_image_only:
+        # 仅 dev 镜像模式：单阶段 Dockerfile，产物只有一个 dev 镜像
+        return _sub(_load("Dockerfile.devonly.tmpl"), base)
+
     dev_stage = ""
     if p.build_dev_image:
-        dev_stage = "\n" + _sub(
-            _load("Dockerfile.dev.tmpl"),
-            {**_base_mapping(p), "DEV_PIP_BLOCK": _dev_pip_block(p, local_wheels)},
-        )
+        dev_stage = "\n" + _sub(_load("Dockerfile.dev.tmpl"), base)
     return _sub(
         _load("Dockerfile.prod.tmpl"),
-        {
-            **_base_mapping(p),
-            "APT_BLOCK": _apt_block(p.apt_package_list),
-            "CUSTOM_INSTALL_BLOCK": _custom_install_block(p.custom_install_cmd),
-            "INSTALL_BLOCK": _install_block(local_wheels),
-            "DEV_STAGE": dev_stage,
-        },
+        {**base, "DEV_STAGE": dev_stage},
     )
 
 
@@ -166,6 +170,13 @@ def render_src_dockerfile(p, staging):
     (Path(staging) / "Dockerfile").write_text(
         render_dockerfile(p, local_wheels=False), encoding="utf-8"
     )
+
+
+def _app_command_block(p):
+    """仅 dev 镜像模式下镜像 CMD 为 bash，app 服务需显式指定启动命令。"""
+    if not p.dev_image_only:
+        return ""
+    return f"    command: {p.prod_command_json}\n"
 
 
 def _app_options_block(p):
@@ -209,7 +220,7 @@ def _nginx_service(p):
 
 def render_compose(p):
     dev_service = ""
-    if p.build_dev_image:
+    if p.dev_tools_enabled:
         dev_service = _sub(_DEV_SERVICE_TMPL, _base_mapping(p))
 
     services = []
@@ -227,6 +238,7 @@ def render_compose(p):
         _load("compose.base.tmpl"),
         {
             **_base_mapping(p),
+            "APP_COMMAND_BLOCK": _app_command_block(p),
             "APP_OPTIONS_BLOCK": _app_options_block(p),
             "DEPENDS_ON_BLOCK": _depends_on_block(p),
             "DEV_SERVICE_BLOCK": dev_service,
@@ -244,14 +256,14 @@ def render_nginx_conf(p):
 def render_makefile(p):
     # dev 目标块内部也用占位符（{{DEV_IMAGE}}），需先替换再插入主模板
     dev_targets = ""
-    if p.build_dev_image:
+    if p.dev_tools_enabled:
         dev_targets = _sub(_DEV_MAKE_TARGETS, _base_mapping(p))
     return _sub(
         _load("Makefile.tmpl"),
         {
             **_base_mapping(p),
             "DEV_TARGETS": dev_targets,
-            "PHONY_DEV": _DEV_PHONY if p.build_dev_image else "",
+            "PHONY_DEV": _DEV_PHONY if p.dev_tools_enabled else "",
         },
     )
 
@@ -271,7 +283,19 @@ def render_src_readme(p):
         services.append("postgres:16 (数据卷 pgdata)")
     services_summary = "、".join(services) if services else "无"
 
-    if p.build_dev_image:
+    if p.dev_image_only:
+        image_summary = f"`{p.dev_image}`（仅 dev 镜像，部署与开发共用）"
+    elif p.build_dev_image:
+        image_summary = f"`{p.prod_image}` / `{p.dev_image}`"
+    else:
+        image_summary = f"`{p.prod_image}`"
+
+    if p.dev_image_only:
+        dev_note = (
+            f"- 本次仅构建 dev 镜像 `{p.dev_image}`，部署（`make up`）与开发"
+            "（`make shell / lint / compile / test`）共用该镜像。"
+        )
+    elif p.build_dev_image:
         dev_note = (
             f"- dev 镜像 `{p.dev_image}` 已包含 ruff/pytest 等工具，"
             "`make shell / lint / compile / test` 可直接使用。"
@@ -283,6 +307,7 @@ def render_src_readme(p):
         _load("README.src.tmpl"),
         {
             **_base_mapping(p),
+            "IMAGE_SUMMARY": image_summary,
             "SERVICES_SUMMARY": services_summary,
             "DEV_TOOLS_NOTE": dev_note,
         },

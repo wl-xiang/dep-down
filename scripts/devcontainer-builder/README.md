@@ -19,6 +19,7 @@ scripts/devcontainer-builder/
 └── templates/
     ├── Dockerfile.prod.tmpl       # prod 阶段（基础镜像 + APT/自定义命令 + 离线 pip install）
     ├── Dockerfile.dev.tmpl        # dev 阶段（FROM prod + 开发工具）
+    ├── Dockerfile.devonly.tmpl    # 仅 dev 镜像模式的单阶段 Dockerfile
     ├── compose.base.tmpl          # compose 骨架（app 服务 + 占位块）
     ├── compose.service.nginx.tmpl # nginx 服务子模板
     ├── compose.service.postgres.tmpl # postgres 服务子模板（含健康检查）
@@ -38,13 +39,14 @@ scripts/devcontainer-builder/
 | `PIP_MIRROR` | `thu` | `pypi.org` / `aliyun` / `thu` |
 | `PIP_PACKAGES` | 空 | `$` 分隔的 pip 包列表 |
 | `APT_PACKAGES` | 空 | 空格分隔的 APT 包 |
-| `CUSTOM_INSTALL_CMD` | 空 | prod 镜像内的个性化安装命令 |
+| `CUSTOM_INSTALL_CMD` | 空 | 镜像内的个性化安装命令 |
 | `ENABLE_NGINX` | `false` | 启用 nginx 服务 |
 | `ENABLE_POSTGRES` | `false` | 启用 postgres 服务 |
 | `APP_DEPENDS_ON_NGINX` | `false` | app depends_on nginx |
 | `APP_DEPENDS_ON_POSTGRES` | `false` | app depends_on postgres |
 | `PROD_COMMAND` | `python main.py` | prod 服务命令 |
 | `BUILD_DEV_IMAGE` | `true` | 是否构建 dev 镜像 |
+| `DEV_IMAGE_ONLY` | `false` | 仅构建 dev 镜像：不再区分 prod/dev，部署也用 dev 镜像，Bundle 只含该镜像（优先于 `BUILD_DEV_IMAGE`） |
 | `IMAGE_PREFIX` | `devcontainer` | 镜像名前缀 |
 | `APP_SOURCE_DIR` | `.` | 挂载为 /app 的源码目录（不支持 `~`） |
 | `APP_PORT` | 空 | 应用容器内监听端口；启用 nginx 时自动生成反代配置 |
@@ -83,6 +85,9 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
 - **多阶段 Dockerfile**：`prod`（运行时）与 `dev`（`FROM prod` + ruff/pytest
   等工具）在同文件内分阶段构建，compose 通过 `target` 区分；dev 服务挂
   `profiles: [dev]`，仅 `make shell/lint/test` 激活，不影响 `make up`。
+- **仅 dev 镜像模式**（`dev_image_only=true`）：Dockerfile 渲染为单阶段 dev
+  镜像，compose 的 app 服务直接使用该 dev 镜像并显式指定 `command`，Bundle
+  只包含这一个镜像（不再生成 prod 镜像文件）。
 - **CMD 而非 ENTRYPOINT**：prod/dev 镜像默认命令均通过 `CMD` 承载，
   `docker compose up` 时由 compose `command` 覆盖执行 `python main.py`，
   `docker compose run dev` 时落到 dev 镜像的 `CMD ["bash"]`，互不冲突。
