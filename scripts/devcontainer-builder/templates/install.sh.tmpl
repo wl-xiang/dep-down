@@ -26,8 +26,20 @@ set -euo pipefail
 
 NEEDS_MAIN_PY={{NEEDS_MAIN_PY}}   # 1 = prod_command 为默认 python main.py
 
+# ---------- 输出着色（仅终端着色；重定向/CI/NO_COLOR 时自动退化为无色） ----------
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+    C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'; C_DIM=$'\033[2m'
+    C_RED=$'\033[31m'; C_GREEN=$'\033[32m'; C_YELLOW=$'\033[33m'; C_CYAN=$'\033[36m'
+else
+    C_RESET=''; C_BOLD=''; C_DIM=''; C_RED=''; C_GREEN=''; C_YELLOW=''; C_CYAN=''
+fi
+err()  { printf '%s\n' "${C_RED}错误:${C_RESET} $*"; }                  # 错误（红）
+step() { printf '%s\n' "${C_BOLD}${C_CYAN}==> $*${C_RESET}"; }          # 阶段标题（青色加粗）
+ok()   { printf '%s\n' "  ${C_GREEN}✓${C_RESET} $*"; }                  # 单项成功（绿勾）
+note() { printf '%s\n' "  ${C_YELLOW}$*${C_RESET}"; }                   # 提示（黄）
+
 usage() {
-    echo "用法: bash $0 [--load] <SRC_ROOT>"
+    echo "${C_BOLD}用法:${C_RESET} bash $0 [--load] <SRC_ROOT>"
     echo "  SRC_ROOT = 你的项目根目录（必须已存在；根目录操作文件安装到 SRC_ROOT，"
     echo "             原始副本与模板安装到 <SRC_ROOT>/docs/devcontainer）"
     echo "  --load   安装开始前自动在脚本所在目录查找 devcontainer-docker-images_*.tgz"
@@ -42,7 +54,7 @@ if [ "${1:-}" = "--load" ]; then
 fi
 [ "$#" -eq 1 ] || usage
 SRC_ROOT=$1
-[ -d "$SRC_ROOT" ] || { echo "错误: SRC_ROOT 不是目录: $SRC_ROOT"; exit 1; }
+[ -d "$SRC_ROOT" ] || { err "SRC_ROOT 不是目录: $SRC_ROOT"; exit 1; }
 SRC_ROOT=$(cd "$SRC_ROOT" && pwd -P)
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
@@ -50,35 +62,35 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
 # ---------- 可选：--load 在安装开始前自动导入镜像归档 ----------
 if [ "$LOAD_IMAGES" = "1" ]; then
     command -v docker >/dev/null 2>&1 \
-        || { echo "错误: --load 需要 docker 命令，但未在 PATH 中检测到 docker"; exit 1; }
+        || { err "--load 需要 docker 命令，但未在 PATH 中检测到 docker"; exit 1; }
     shopt -s nullglob
     img_tgzs=("$SCRIPT_DIR"/devcontainer-docker-images_*.tgz)
     shopt -u nullglob
     if [ "${#img_tgzs[@]}" -eq 0 ]; then
-        echo "错误: 未在 $SCRIPT_DIR 找到 devcontainer-docker-images_*.tgz"
+        err "未在 $SCRIPT_DIR 找到 devcontainer-docker-images_*.tgz"
         echo "      （--load 需与镜像归档放在同一目录，即 install.sh 旁边）"
         exit 1
     fi
     if [ "${#img_tgzs[@]}" -gt 1 ]; then
-        echo "错误: $SCRIPT_DIR 下有多个镜像归档，请只保留本次使用的那个："
+        err "$SCRIPT_DIR 下有多个镜像归档，请只保留本次使用的那个："
         printf '  %s\n' "${img_tgzs[@]}"
         exit 1
     fi
-    echo "== 导入镜像归档（docker load）=="
+    step "导入镜像归档（docker load）"
     docker load -i "${img_tgzs[0]}"
-    echo "  已导入 ${img_tgzs[0]}"
+    ok "已导入 ${C_BOLD}${img_tgzs[0]}${C_RESET}"
 fi
 
 shopt -s nullglob
 tgzs=("$SCRIPT_DIR"/devcontainer-src_*.tgz)
 shopt -u nullglob
 if [ "${#tgzs[@]}" -eq 0 ]; then
-    echo "错误: 未在 $SCRIPT_DIR 找到 devcontainer-src_*.tgz（请与安装脚本放在同一目录，"
+    err "未在 $SCRIPT_DIR 找到 devcontainer-src_*.tgz（请与安装脚本放在同一目录，"
     echo "      建议把 bundle zip 放到项目根目录 dist/ 下解压后执行 bash install.sh ../）"
     exit 1
 fi
 if [ "${#tgzs[@]}" -gt 1 ]; then
-    echo "错误: $SCRIPT_DIR 下有多个 src 包，请只保留本次使用的那个："
+    err "$SCRIPT_DIR 下有多个 src 包，请只保留本次使用的那个："
     printf '  %s\n' "${tgzs[@]}"
     exit 1
 fi
@@ -95,19 +107,19 @@ COPY_ROOT_FILES=("Makefile:Makefile" "build.sh:build.sh" "Dockerfile.addon:Docke
 # ---------- 前置校验：先全部检查，再动手写盘（失败不留半套安装） ----------
 fail=0
 if [ -e "$DEST" ]; then
-    echo "错误: $DEST 已存在。"
+    err "$DEST 已存在。"
     echo "  重新安装请先删除该目录：rm -rf \"$DEST\"（注意保留你手工修改过的文件）"
     fail=1
 fi
 if [ -e "$COMPOSE_FILE" ]; then
-    echo "错误: $COMPOSE_FILE 已存在，避免覆盖你的 compose 配置，安装终止。"
+    err "$COMPOSE_FILE 已存在，避免覆盖你的 compose 配置，安装终止。"
     echo "  请先移动/重命名该文件后重试。"
     fail=1
 fi
 for pair in "${COPY_ROOT_FILES[@]}"; do
     dst_name=${pair##*:}
     if [ -e "$SRC_ROOT/$dst_name" ]; then
-        echo "错误: $SRC_ROOT/$dst_name 已存在，避免覆盖你自己的文件，安装终止。"
+        err "$SRC_ROOT/$dst_name 已存在，避免覆盖你自己的文件，安装终止。"
         echo "  请先移动/重命名后重试（如为旧版安装残留，确认无需保留后删除）。"
         fail=1
     fi
@@ -119,21 +131,21 @@ mkdir -p "$DEST"
 tar xzf "$TGZ" -C "$DEST" --strip-components=1
 
 TPL="$DEST/docker-compose.yml.tpl"
-[ -f "$TPL" ] || { echo "错误: 包内缺少 docker-compose.yml.tpl: $TPL"; exit 1; }
+[ -f "$TPL" ] || { err "包内缺少 docker-compose.yml.tpl: $TPL"; exit 1; }
 
 # compose 运行文件：复制模板到项目根目录，仅去掉 .tpl 后缀（不做任何渲染，
 # ${SRC_ROOT:-./} / ${SRC_ROOT_NAME:-app} 由 docker compose 运行时解析）
-echo "== 复制 compose 模板 =="
+step "复制 compose 模板"
 cp "$TPL" "$COMPOSE_FILE"
-echo "  已创建 $COMPOSE_FILE"
+ok "已创建 ${C_BOLD}$COMPOSE_FILE${C_RESET}"
 
 # 根目录操作文件：从 docs/devcontainer 原始副本复制到项目根目录（改名见上）
-echo "== 安装根目录操作文件 =="
+step "安装根目录操作文件"
 for pair in "${COPY_ROOT_FILES[@]}"; do
     src_name=${pair%%:*}
     dst_name=${pair##*:}
     cp "$DEST/$src_name" "$SRC_ROOT/$dst_name"
-    echo "  已创建 $SRC_ROOT/$dst_name (来自 $src_name)"
+    ok "已创建 $SRC_ROOT/$dst_name ${C_DIM}(来自 $src_name)${C_RESET}"
 done
 # zip/tar 传输可能丢失可执行位，显式恢复
 chmod 755 "$SRC_ROOT/build.sh"
@@ -143,7 +155,7 @@ merge_ignore_file() {  # $1 = 包内文件名（与根目录目标同名）
     local src="$DEST/$1" dst="$SRC_ROOT/$1" line added=0
     if [ ! -e "$dst" ]; then
         cp "$src" "$dst"
-        echo "  已创建 $SRC_ROOT/$1"
+        ok "已创建 $SRC_ROOT/$1"
         return
     fi
     while IFS= read -r line; do
@@ -154,12 +166,12 @@ merge_ignore_file() {  # $1 = 包内文件名（与根目录目标同名）
         fi
     done < "$src"
     if [ "$added" = "1" ]; then
-        echo "  已合并 $SRC_ROOT/$1（仅追加缺失条目，原有内容未改动）"
+        ok "已合并 $SRC_ROOT/$1 ${C_DIM}(仅追加缺失条目，原有内容未改动)${C_RESET}"
     else
-        echo "  $SRC_ROOT/$1 已包含全部条目，未修改"
+        note "$SRC_ROOT/$1 已包含全部条目，未修改"
     fi
 }
-echo "== 安装 .dockerignore / .gitignore =="
+step "安装 .dockerignore / .gitignore"
 merge_ignore_file ".dockerignore"
 merge_ignore_file ".gitignore"
 
@@ -169,25 +181,27 @@ mkdir -p "$SRC_ROOT/wheels"
 REQ_FILE="$SRC_ROOT/wheels/requirements.txt"
 if [ ! -e "$REQ_FILE" ]; then
     printf -- '--no-index --find-links=./\n' > "$REQ_FILE"
-    echo "已创建 $REQ_FILE（离线安装头）"
+    ok "已创建 $REQ_FILE（离线安装头）"
 fi
 
 if [ "$NEEDS_MAIN_PY" = "1" ] && [ ! -e "$SRC_ROOT/main.py" ]; then
     cp "$DEST/main.py" "$SRC_ROOT/main.py"
-    echo "已创建占位入口 $SRC_ROOT/main.py（make up 默认运行 python main.py，请替换为真实入口）"
+    ok "已创建占位入口 $SRC_ROOT/main.py（make up 默认运行 python main.py，请替换为真实入口）"
 fi
 
 echo ""
-echo "安装完成: 根目录操作文件在 $SRC_ROOT，原始副本在 $DEST"
-echo "compose 文件: $COMPOSE_FILE"
+printf '%s\n' "${C_GREEN}${C_BOLD}======================== 安装完成 ========================${C_RESET}"
+echo "根目录操作文件: ${C_BOLD}$SRC_ROOT${C_RESET}"
+echo "原始副本:       $DEST"
+echo "compose 文件:   $COMPOSE_FILE"
 echo ""
-echo "后续步骤："
+echo "${C_BOLD}后续步骤：${C_RESET}"
 if [ "$LOAD_IMAGES" = "1" ]; then
-    echo "  1. （镜像已随 --load 自动导入，跳过 docker load）"
+    note "1. （镜像已随 --load 自动导入，跳过 docker load）"
 else
     echo "  1. docker load -i devcontainer-docker-images_{{TS}}.tgz    # 在 install.sh 所在目录执行，若尚未导入镜像"
 fi
-echo "  2. cd \"$SRC_ROOT\"                          # 所有 make / build.sh 命令都在项目根目录执行"
-echo "  3. make check && make up && make logs"
+echo "  2. cd ${C_BOLD}\"$SRC_ROOT\"${C_RESET}                          # 所有 make / build.sh 命令都在项目根目录执行"
+echo "  3. ${C_GREEN}make check && make up && make logs${C_RESET}"
 echo "  （make shell / lint / compile / test 也在项目根目录执行；docs/devcontainer 下"
 echo "    是原始副本，改坏根目录文件时从那里复制回来重置即可）"
