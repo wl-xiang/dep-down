@@ -360,8 +360,11 @@ src 同时间戳（先 `make check` 自检）。
 而不是 `127.0.0.1`。启用 nginx 时宿主机访问 `:8080`，由 nginx 反代到 app。
 
 **Q: 跨架构构建（amd64 Runner 构建 arm64 镜像）很慢？**
-arm64 构建通过 QEMU 模拟执行，速度约为原生 1/5~1/10，属正常现象；工作流已
-设置 90 分钟超时。条件允许时优先在原生架构 Runner 上构建。
+不会出现：`platform=linux-arm64` 时工作流自动切换到 ARM 原生 Runner
+（`ubuntu-24.04-arm`），docker build 全程原生执行，无需 QEMU 模拟。
+公共仓库该 Runner 免费；私有仓库按分钟计费（2026-01 起可用）。若你把
+`runs-on` 改回 x86 Runner 又要构建 arm64，需自行恢复
+`docker/setup-qemu-action` 步骤（模拟执行速度约为原生 1/5~1/10）。
 
 **Q: 某个 pip 包下载失败（No matching distribution）？**
 多为该包无目标平台的 wheel（只有 sdist）。改用 `custom_install_cmd` 预编译，
