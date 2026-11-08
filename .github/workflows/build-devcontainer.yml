@@ -93,7 +93,7 @@ on:
         required: true
         default: 'devcontainer'
       app_source_dir:
-        description: 'Source directory mounted into the container as /app (relative to the compose file)'
+        description: 'Subdirectory of the project root mounted into the container as /app (default "." = whole root; the project root is passed to install.sh at install time)'
         type: string
         required: true
         default: '.'
@@ -119,7 +119,10 @@ permissions:
 jobs:
   build-devcontainer:
     name: Build offline dev images
-    runs-on: ubuntu-latest
+    # linux-arm64 使用 ARM 原生 Runner（ubuntu-24.04-arm：公共仓库免费，
+    # 私有仓库按分钟计费），免去 QEMU 模拟（速度约为原生 1/5~1/10）；
+    # amd64 走标准 x86_64 Runner。
+    runs-on: ${{ inputs.platform == 'linux-arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     timeout-minutes: 90
     steps:
       - name: Checkout repository
@@ -138,9 +141,8 @@ jobs:
           restore-keys: |
             devcontainer-pip-${{ inputs.platform }}-py${{ inputs.python_version }}-${{ inputs.glibc_version }}-
 
-      - name: Set up QEMU (cross-arch builds)
-        uses: docker/setup-qemu-action@v3
-
+      # 无需 QEMU：runner 架构已与目标平台一致（amd64 → x86_64 Runner，
+      # arm64 → ubuntu-24.04-arm），docker build 全程原生执行
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -176,8 +178,35 @@ jobs:
           tar tzf "${{ steps.build.outputs.src_tgz }}" > /tmp/src_tgz.list
           head -30 /tmp/src_tgz.list
           echo "... $(wc -l < /tmp/src_tgz.list) entries total"
+          # install.sh 依赖的关键文件必须存在
+          grep -q 'devcontainer-src/docker-compose.yaml.tpl$' /tmp/src_tgz.list \
+            || { echo "::error::src 包缺少 docker-compose.yaml.tpl"; exit 1; }
+          grep -q 'devcontainer-src/main.py$' /tmp/src_tgz.list \
+            || { echo "::error::src 包缺少占位 main.py"; exit 1; }
+          # 离线补装机制（build.sh + Dockerfile.addon）
+          grep -q 'devcontainer-src/Dockerfile.addon$' /tmp/src_tgz.list \
+            || { echo "::error::src 包缺少 Dockerfile.addon"; exit 1; }
+          grep -q 'devcontainer-src/build.sh$' /tmp/src_tgz.list \
+            || { echo "::error::src 包缺少 build.sh"; exit 1; }
           echo "--- checksum (与 Summary 表格中的 SHA256 对比) ---"
           sha256sum "${{ steps.build.outputs.src_tgz }}"
+          if [ -n "${{ steps.build.outputs.install_sh }}" ]; then
+            echo "--- install.sh ---"
+            test -x "${{ steps.build.outputs.install_sh }}" \
+              || { echo "::error::install.sh 缺少可执行权限"; exit 1; }
+            bash -n "${{ steps.build.outputs.install_sh }}"
+            sha256sum "${{ steps.build.outputs.install_sh }}"
+          else
+            echo "::error::install.sh 未生成"
+            exit 1
+          fi
+          echo "--- build.sh (from src tgz) ---"
+          tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/build.sh > /tmp/build.sh
+          bash -n /tmp/build.sh
+          # tar 需保留可执行位（artifact zip 解压可能丢失，文档引导 bash 调用）
+          tar tvzf "${{ steps.build.outputs.src_tgz }}" devcontainer-src/build.sh \
+            | grep -q '^-[rwx-]*x' \
+            || { echo "::error::src 包内 build.sh 无可执行权限"; exit 1; }
           if [ -n "${{ steps.build.outputs.bundle_tgz }}" ]; then
             echo "--- ${{ steps.build.outputs.bundle_name }} ---"
             # bundle 是 gzip 压缩的镜像归档：根目录必须能直接看到 manifest.json（或 OCI index.json）
@@ -199,6 +228,19 @@ jobs:
         with:
           name: ${{ steps.build.outputs.src_name }}
           path: ${{ steps.build.outputs.src_tgz }}
+          compression-level: 0
+          if-no-files-found: error
+
+      # 安装脚本：构建时已 chmod 755，此处显式再确认一次
+      # （注：artifact zip 解压后可能丢失 +x，文档统一引导用户 bash install.sh 调用）
+      - name: Make install.sh executable
+        run: chmod +x "${{ steps.build.outputs.install_sh }}"
+
+      - name: Upload install script artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.build.outputs.install_name }}
+          path: ${{ steps.build.outputs.install_sh }}
           compression-level: 0
           if-no-files-found: error
 

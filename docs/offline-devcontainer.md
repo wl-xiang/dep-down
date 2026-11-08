@@ -11,12 +11,14 @@ Python 环境**。
 外网 GitHub Runner                         内网离线机器
 ────────────────────                       ────────────────────
 参数解析与校验
-模板渲染 (Dockerfile/compose/Makefile)
+模板渲染 (Dockerfile/compose.tpl/Makefile)
 pip download → wheels/
 docker build (prod → dev / 仅 dev)         docker load bundle tgz
-docker pull (nginx/postgres, 按需)         解压 src → 复制到应用根目录
-打包 src tgz + bundle tgz ──── 传输 ────→  make check / shell / lint / compile / test
-上传 Artifacts + 写 Summary                make up (python main.py)
+docker pull (nginx/postgres, 按需)         bash install.sh <应用根目录>
+打包 src tgz + bundle tgz + install.sh     → <应用根>/docs/devcontainer/
+────────── 传输（3 个 Artifacts）────────→  cd <应用根>/docs/devcontainer
+上传 Artifacts + 写 Summary                make check / shell / lint / compile / test
+                                           make up (python main.py)
 ```
 
 ## 使用前提
@@ -25,18 +27,20 @@ docker pull (nginx/postgres, 按需)         解压 src → 复制到应用根�
 - 内网机器：Docker >= 20.10（建议 23+），且带 compose v2 插件（`docker compose version` 可执行）。
 - 内网机器 CPU 架构需与构建时选择的平台一致（amd64 / arm64），否则容器启动报
   `exec format error`。
-- 应用代码建议与解压出的 compose/Makefile 同目录（见「内网使用步骤」）。
+- 应用代码放在独立的项目根目录（如 `~/apps/myapp1`），devcontainer 文件由
+  `install.sh` 安装到该目录下的 `docs/devcontainer/`，与业务代码互不混放。
 
 ## 触发构建
 
 1. 进入 Fork 后的仓库，点击 **Actions** → 左侧选择 **Build DevContainer** →
    **Run workflow**。
-2. 填写参数后运行。运行完成后在 **Summary** 底部 **Artifacts** 下载两个产物：
-   - `devcontainer-src_<时间戳>.tgz`：运行时源码包
+2. 填写参数后运行。运行完成后在 **Summary** 底部 **Artifacts** 下载三个产物：
+   - `devcontainer-src_<时间戳>.tgz`：运行时源码包（compose 模板、Makefile 等）
    - `devcontainer-bundle_<时间戳>.tgz`：镜像 Bundle 包
+   - `install.sh`：安装脚本（把 src 包安装到应用根目录的 `docs/devcontainer/`）
 
    > Artifacts 只能是 zip 封装，工作流已设置 `compression-level: 0`（仅存储、
-   > 不再二次压缩），解压 zip 即得到唯一的 tgz 产物。
+   > 不再二次压缩），解压 zip 即得到产物文件。
 3. Summary 页同时给出本次构建的完整摘要与内网使用步骤。
 
 ### 触发参数（Inputs）
@@ -58,9 +62,9 @@ docker pull (nginx/postgres, 按需)         解压 src → 复制到应用根�
 | `build_dev_image` | boolean | — | `true` | 是否同时构建 dev 镜像（ruff/pytest 等，继承 prod） |
 | `dev_image_only` | boolean | — | `false` | 仅构建 dev 镜像：不再区分 prod/dev 两个镜像，部署（`make up`）也使用 dev 镜像，Bundle 只包含该 dev 镜像（优先于 `build_dev_image`） |
 | `image_prefix` | string | 小写字母/数字/`._-` | `devcontainer` | 镜像名前缀（生成 `<prefix>-prod:<tag>` / `<prefix>-dev:<tag>`；仅 dev 镜像模式只有 `<prefix>-dev:<tag>`） |
-| `app_source_dir` | string | 相对/绝对路径 | `.` | 挂载进容器 `/app` 的源码目录（相对 compose 文件；不支持 `~`） |
+| `app_source_dir` | string | 相对/绝对路径 | `.` | 挂载进容器 `/app` 的目录：`.` = 整个项目根目录；相对路径 = 项目根目录下的子目录（如 monorepo 中的应用子目录，可避免 ruff/pytest 扫到无关源码）；也支持绝对路径。项目根目录由 `install.sh` 安装时传入（不支持 `~`） |
 | `app_port` | string | 端口号 | 空 | 应用在容器内监听的端口。设置后：无 nginx 时映射宿主机同端口；启用 nginx 时由 nginx 反代，app 仅容器网络暴露 |
-| `env_file` | string | 逗号/空格分隔 | 空 | 注入 app 服务的 env 文件（相对 compose 文件），如 `.env` |
+| `env_file` | string | 逗号/空格分隔 | 空 | 注入 app 服务的 env 文件（相对应用根目录，如 `.env`；也支持绝对路径） |
 | `selinux_relabel` | boolean | — | `false` | 给 `/app` 挂载追加 `:z` 重打标签（SELinux Enforcing 主机需要） |
 
 > **提示**：`pip_packages` 输入框无法换行，使用 `$` 分隔多个包，与
@@ -82,26 +86,49 @@ docker pull (nginx/postgres, 按需)         解压 src → 复制到应用根�
 
 ### devcontainer-src_<yyyymmdd-HHMMSS>.tgz
 
-解压后得到顶层目录 `devcontainer-src/`：
+解压后得到顶层目录 `devcontainer-src/`（正常使用无需手动解压，由 `install.sh`
+完成）：
 
 ```
 devcontainer-src/
-├── Dockerfile              # 多阶段 prod/dev；仅 dev 镜像模式下为单阶段 dev
-├── docker-compose.yaml     # app + dev(profile) + 外挂服务
-├── Makefile                # check/up/down/shell/lint/compile/test 等
-├── requirements.txt        # pip 包清单
-├── nginx/conf.d/           # 仅 enable_nginx 且指定 app_port 时生成反代配置
-├── scripts/                # 仓库随附的离线下载工具（pip/npm）
-└── README.md               # 快速上手说明
+├── Dockerfile                   # 多阶段 prod/dev；仅 dev 镜像模式下为单阶段 dev
+├── docker-compose.yaml.tpl      # compose 模板（install.sh 渲染为 docker-compose.yaml）
+├── Makefile                     # check/up/down/shell/lint/compile/test 等
+├── main.py                      # 占位入口（应用根目录无 main.py 时由 install.sh 复制）
+├── requirements.txt             # pip 包清单
+├── Dockerfile.addon             # 离线补装：基于现有镜像把 wheels/ 打进 addon 镜像
+├── build.sh                     # 离线补装入口（docker build Dockerfile.addon）
+├── nginx/conf.d/                # 仅 enable_nginx 且指定 app_port 时生成反代配置
+├── scripts/                     # 仓库随附的离线下载工具（pip/npm）
+└── README.md                    # 快速上手说明
 ```
 
 `wheels/` 不再随源码包分发：所有 wheel 已在镜像构建阶段安装，并固化在镜像
 `/wheels` 内，内网可直接在容器中离线安装（见「prod / dev 镜像」）。
 
-**推荐用法**：把本目录内容复制到应用根目录（如 `~/apps/myapp1/`），
-`docker-compose.yaml` / `Makefile` 与业务代码同目录，`app_source_dir=.` 即可
-无缝挂载，无需改任何路径。用 `tar --skip-old-files`（或 `cp -rn`）复制，避免
-盖掉业务自带的 `requirements.txt` / `README.md` 等同名文件。
+### install.sh
+
+安装脚本（独立 Artifact）。把本脚本与 src tgz 放在同一目录，执行：
+
+```bash
+bash install.sh ~/apps/myapp1        # 参数 = 你的项目根目录
+```
+
+脚本会：
+
+1. 在 `<项目根>/docs/devcontainer/` 下解压 src 包（目录已存在则报错，
+   避免新旧版本混装；重新安装请先删除该目录）；
+2. 渲染 `docker-compose.yaml.tpl` → `docker-compose.yaml`：`{{SRC_ROOT}}`
+   占位符替换为项目根目录**绝对路径**（挂载为容器 `/app`），并按项目目录名
+   生成 compose 项目名（如 `devcontainer-myapp1`）；
+3. 项目根目录没有 `main.py` 且启动命令为默认的 `python main.py` 时，复制
+   占位 `main.py`（不覆盖已有文件）。
+
+> 为什么 compose 文件带 `.tpl` 后缀：避免被 docker compose 自动发现或被
+> `-f` 误用，与项目根目录下用户自己的 compose 配置彻底隔离——compose 多
+> 文件合并对 `ports` 等列表只做并集、无法通过 override 移除，`*.override.yaml`
+> 自动合并也会产生同样问题。渲染出的 `docker-compose.yaml` 位于
+> `docs/devcontainer/`，可放心手工修改。
 
 ### devcontainer-bundle_<yyyymmdd-HHMMSS>.tgz
 
@@ -113,34 +140,72 @@ TAG 一致；Summary 中同时给出 SHA256，便于校验传输完整性。
 ## 内网使用步骤
 
 ```bash
-# 1. 导入镜像（Artifact 的 zip 解压后得到 tgz，可直接 load）
+# 1. 下载三个 Artifacts（各自解压 zip），放到同一目录：
+#    install.sh  devcontainer-src_<ts>.tgz  devcontainer-bundle_<ts>.tgz
+
+# 2. 导入镜像
 docker load -i devcontainer-bundle_20260101-120000.tgz
 
-# 2. 把 src 内容铺到应用根目录（--skip-old-files 不覆盖已有业务文件）
-tar xzf devcontainer-src_20260101-120000.tgz -C ~/apps/myapp1 \
-    --strip-components=1 --skip-old-files
-cd ~/apps/myapp1
+# 3. 安装到应用根目录（参数 = 你的项目根目录）
+bash install.sh ~/apps/myapp1
 
-# 3. 离线自检：镜像是否已导入、CPU 架构是否匹配
+# 4. 离线自检：镜像是否已导入、CPU 架构是否匹配
+cd ~/apps/myapp1/docs/devcontainer
 make check
 
-# 4. 开发阶段
+# 5. 开发阶段
 make shell      # 进入 dev 容器交互式 bash（含 ruff/pytest 等）
 make lint       # ruff check .
 make compile    # python -m compileall -q .
 make test       # pytest -q
 
-# 5. 运行阶段（--no-build，不会联网构建/拉取）
+# 6. 运行阶段（--no-build，不会联网构建/拉取）
 make up
 make logs       # 跟随日志
 make down       # 停止
 ```
 
+## 离线补装 Python 包（build.sh + Dockerfile.addon）
+
+构建时漏了的包、后来才需要的包，都可以在**不联网**的内网机器上补进镜像，
+无需重新跑一次 Action：
+
+```bash
+# 1. 联网机器：下载缺的包为 wheel（docs/devcontainer/scripts/pip/ 即本工具）
+python scripts/pip/pip_download.py <包名...> -d /tmp/wheels
+#    产物含 *.whl 和带 --no-index 头的 requirements.txt
+#    把 /tmp/wheels 整个目录拷回内网 <应用根目录>/wheels/
+
+# 2. 内网机器，在 <应用根目录>/docs/devcontainer 下执行：
+bash build.sh [新TAG]        # 新TAG 默认 addon-<原TAG>
+
+# 3. 按输出的 sed 命令把 docker-compose.yaml 切换到新镜像（如
+#    devcontainer-dev:addon-20260101-120000），然后：
+make up && make logs
+```
+
+工作原理与说明：
+
+- `Dockerfile.addon` 按构建模式对每个应用镜像生成一个阶段（prod+dev 模式
+  分别基于 prod / dev 镜像；仅 dev 镜像模式只有 dev），`build.sh` 逐个
+  `docker build --target` 生成 `<镜像名>:addon-<原TAG>`。
+- wheel 通过临时构建上下文复制到镜像内 `/tmp/addon-wheels`，`pip install
+  --no-index --find-links` 安装后**同一 RUN 层内删除**——不会增大最终镜像
+  体积；已在基础镜像中安装的依赖 pip 自动跳过。
+- `wheels/` 下有 `requirements.txt` 时按清单安装（`--no-index` 头保证不
+  联网），否则安装目录下全部 `*.whl`。
+- 构建上下文是临时目录（只含 wheels），不会把整个应用目录发给 docker
+  daemon；构建结束自动清理。
+- 回滚：重新 `docker load -i devcontainer-bundle_<原TAG>.tgz` 即可恢复
+  原镜像 TAG。
+
 ## Makefile 目标
+
+所有 make 命令在 `<应用根目录>/docs/devcontainer/` 下执行。
 
 | 目标 | 说明 |
 |------|------|
-| `make help` | 列出所有目标 |
+| `make help` | 列出所有目标（目标说明须写在 `## ` 双井号之后才会显示） |
 | `make check` | **离线自检**：打印 docker 架构，逐个确认本次镜像已导入（缺失时提示 `docker load`） |
 | `make build` | `docker compose build`（**需联网**：发布包不含 wheels/，deps 从 apt/pip 源安装；离线机器勿用） |
 | `make up` | `docker compose up -d --no-build`，后台启动 prod 服务（及已启用的外挂服务） |
@@ -156,6 +221,10 @@ make down       # 停止
 > `shell/dev/lint/compile/test` 依赖 dev 镜像（`build_dev_image=true` 或
 > `dev_image_only=true` 时才有），通过 compose 的 `dev` profile 激活，不影响
 > `make up` 的运行行为。
+>
+> 容器默认以当前用户身份运行：Makefile 自动导出 `HOST_UID`/`HOST_GID`
+> （`$(id -u)` / `$(id -g)`），避免挂载目录出现 root 属主文件。临时需要
+> root 时：`make shell HOST_UID=0 HOST_GID=0`（命令行变量优先于默认值）。
 
 ## 外挂服务
 
@@ -173,6 +242,34 @@ make down       # 停止
   不会尝试拉取镜像。
 
 ## 设计说明
+
+### install.sh 与 compose 模板（.tpl）
+
+- src 包内的 compose 文件名为 `docker-compose.yaml.tpl`：`.tpl` 后缀保证它
+  不会被 docker compose 自动发现，也不会被 `-f` 误用。compose 多文件合并对
+  `ports` 等列表只做**并集**（无法通过 override 移除），`*.override.yaml`
+  自动合并也会产生同样的问题——隔离后，devcontainer 的 compose 与应用根目录
+  下用户自己的 compose 配置互不影响。
+- `install.sh <项目根目录>` 把 src 包解压到 `<项目根>/docs/devcontainer/`，
+  并渲染模板：`{{SRC_ROOT}}` → 项目根目录绝对路径（挂载为容器 `/app`，
+  避免「相对路径以第一个 -f 文件所在目录为基准」的歧义），项目名固定为
+  `<image_prefix>-<项目目录名>`（避免默认取目录名导致多应用冲突）。
+- 渲染出的 `docker-compose.yaml` 是用户可改的副本，`.tpl` 保持原样。
+- 应用根目录没有 `main.py` 且启动命令为默认值时，install.sh 复制占位
+  `main.py`，保证 `make up` 开箱即用（否则 `python main.py` 立即退出，配合
+  `restart: unless-stopped` 会无限重启）。
+
+### 容器用户（root 污染防护）
+
+- compose 中 app/dev 服务均设置 `user: "${HOST_UID:-0}:${HOST_GID:-0}"`。
+  Makefile 自动导出 `HOST_UID=$(id -u)` / `HOST_GID=$(id -g)`，容器默认以
+  当前用户身份运行——否则 ruff（`.ruff_cache`）、pytest（`.pytest_cache`）、
+  compileall（`__pycache__`）及应用写入的文件都会变成 root 属主，普通用户
+  无法删除。
+- 需要 root（容器内 `pip install` 到系统目录）时：
+  `make shell HOST_UID=0 HOST_GID=0`。
+- 已知无害副作用：非 root UID 在容器内没有 passwd 条目，bash 提示
+  `I have no name!`；`app_port < 1024` 时非 root 无法绑定低端口。
 
 ### glibc 语义
 
@@ -208,15 +305,17 @@ make down       # 停止
 - dev 工具（ruff/pytest/pytest-cov）的 wheel 会在构建 dev 镜像时一并下载。
 - **业务依赖必须在 `pip_packages` 中显式列出**（构建端拿不到业务代码，无法
   自动解析业务 `requirements.txt`）。漏装会在离线运行时表现为
-  `ModuleNotFoundError`，而内网无法现场安装（`/wheels` 只含构建时下载的包）。
+  `ModuleNotFoundError`；此时可用 `build.sh` 离线补装（见「离线补装
+  Python 包」），或临时在容器内 `pip install --no-index --find-links=/wheels
+  <pkg>`。
 
 ## FAQ
 
 **Q: 为什么内网 `make up` 报错找不到镜像 / 尝试联网构建？**
-先执行 `docker load -i devcontainer-bundle_<时间戳>.tgz` 导入镜像，再在应用目录执行
-`make check` 确认所有镜像存在；`make up` 使用 `--no-build`，compose 中也设置了
-`pull_policy: never`，不会联网。若仍失败，说明镜像 TAG 与 compose 中不一致，
-请确认使用同一时间戳的 src 与 bundle。
+先执行 `docker load -i devcontainer-bundle_<时间戳>.tgz` 导入镜像，再在
+`docs/devcontainer` 目录执行 `make check` 确认所有镜像存在；`make up` 使用
+`--no-build`，compose 中也设置了 `pull_policy: never`，不会联网。若仍失败，
+说明镜像 TAG 与 compose 中不一致，请确认使用同一时间戳的 src 与 bundle。
 
 **Q: `docker load` 成功但容器起不来，日志报 `exec format error`？**
 构建平台与服务器 CPU 架构不一致（例如构建时选了 `linux-arm64`，服务器是 x86）。
@@ -229,32 +328,52 @@ bundle 通常几百 MB 到 1 GB+，传输中断很常见。对比 Summary 中的
 **Q: `docker load` 磁盘空间不足？**
 导入过程需要约 2 倍镜像体积的临时空间（`docker info` 查看 Docker Root Dir 所在分区）。
 
-**Q: 业务目录已有 `requirements.txt` / `README.md`，复制 src 会覆盖吗？**
-用 `tar xzf ... -C ~/apps/myapp1 --strip-components=1 --skip-old-files`（或
-`cp -rn`）即可保留业务文件。注意：离线运行不依赖这些生成文件；只有执行
-`make build` 在线重建时，Dockerfile 才会读取应用目录下的 `requirements.txt`
-（此时正好是业务自己的清单）。
+**Q: 业务项目里会被放进哪些 devcontainer 文件？**
+只有 `docs/devcontainer/` 一个目录（以及应用根目录没有 `main.py` 时复制的
+占位 `main.py`）。其余业务文件一律不动，也不会与业务自带的
+`requirements.txt` / `README.md` 冲突（同名文件都在 `docs/devcontainer/` 内）。
+
+**Q: 如何重新安装 / 更新到新构建的版本？**
+删除旧的 `<应用根>/docs/devcontainer`（注意保留你手工修改过的
+`docker-compose.yaml` 等文件），再用新的 `install.sh` + src tgz 重新安装。
+`install.sh` 遇到已存在的目录会直接报错，避免新旧版本混装。
+
+**Q: `make up` 后容器一直重启（Restarting）？**
+`python: can't open file '/app/main.py'` 类错误说明启动命令指向的入口不存在：
+确认项目根目录（或 `app_source_dir` 指定的子目录）下有对应入口文件，或修改
+`docs/devcontainer/docker-compose.yaml` 中的 `command`。注意镜像 TAG 必须与
+src 同时间戳（先 `make check` 自检）。
 
 **Q: 挂载目录里出现 root 属主文件 / 宿主机无法修改？**
-compose 默认以 `HOST_UID=0` 运行（root）。启动前 `export HOST_UID=$(id -u)
-HOST_GID=$(id -g)` 即可让容器以当前用户身份运行（此时容器内 `pip install` 需要
-额外权限，`/wheels` 离线安装请用 root）。
+默认不会：Makefile 自动导出 `HOST_UID`/`HOST_GID`（当前用户），容器以你的
+身份运行。若你曾用 `HOST_UID=0` 运行产生了 root 文件，用
+`sudo rm -rf <路径>` 清理，或 `sudo chown -R $(id -u):$(id -g) <路径>` 改回
+属主。容器内需要 root 时：`make shell HOST_UID=0 HOST_GID=0`。
 
 **Q: SELinux Enforcing 主机上容器读不到 `/app`？**
-构建时把 `selinux_relabel` 设为 `true`（挂载追加 `:z`），或在 compose 中手动改
-`volumes` 为 `"./:/app:z"`。
+构建时把 `selinux_relabel` 设为 `true`（挂载追加 `:z`），或手动修改
+`docs/devcontainer/docker-compose.yaml` 中 app/dev 服务的 `volumes`，在挂载
+路径末尾追加 `:z`。
 
 **Q: 应用起来了但宿主机访问不到？**
 构建时设置 `app_port`（应用在容器内监听的端口），并确认应用监听 `0.0.0.0`
 而不是 `127.0.0.1`。启用 nginx 时宿主机访问 `:8080`，由 nginx 反代到 app。
 
 **Q: 跨架构构建（amd64 Runner 构建 arm64 镜像）很慢？**
-arm64 构建通过 QEMU 模拟执行，速度约为原生 1/5~1/10，属正常现象；工作流已
-设置 90 分钟超时。条件允许时优先在原生架构 Runner 上构建。
+不会出现：`platform=linux-arm64` 时工作流自动切换到 ARM 原生 Runner
+（`ubuntu-24.04-arm`），docker build 全程原生执行，无需 QEMU 模拟。
+公共仓库该 Runner 免费；私有仓库按分钟计费（2026-01 起可用）。若你把
+`runs-on` 改回 x86 Runner 又要构建 arm64，需自行恢复
+`docker/setup-qemu-action` 步骤（模拟执行速度约为原生 1/5~1/10）。
 
 **Q: 某个 pip 包下载失败（No matching distribution）？**
 多为该包无目标平台的 wheel（只有 sdist）。改用 `custom_install_cmd` 预编译，
 或换用 `platform`/`python_version` 组合。
+
+**Q: 离线运行时报 `ModuleNotFoundError`，缺的包怎么补？**
+两步：联网机器用 `scripts/pip/pip_download.py` 下载该包 wheel 拷到
+`<应用根目录>/wheels/`，内网在 `docs/devcontainer` 下执行 `bash build.sh`
+生成 addon 镜像并按提示切换 compose。详见「离线补装 Python 包」。
 
 **Q: 如何使用私有 PyPI？**
 第一版未内置私有源选项。可 Fork 后在 `scripts/devcontainer-builder/lib/params.py`

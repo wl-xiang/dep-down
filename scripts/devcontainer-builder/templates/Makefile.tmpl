@@ -1,12 +1,22 @@
 # 由 scripts/devcontainer-builder 生成，请勿手工编辑。
 # 平台: {{DOCKER_PLATFORM}} | 镜像 TAG: {{TAG}}
+# 本 Makefile 位于 <应用根目录>/docs/devcontainer，所有 make 命令都在该目录执行；
+# 应用根目录由 install.sh 渲染进 docker-compose.yaml（绝对路径挂载为容器 /app）。
 
 COMPOSE := docker compose
-DEV_RUN := $(COMPOSE) --profile dev run --rm dev
+DEV_RUN := $(COMPOSE) run --rm dev
 IMAGES := {{IMAGE_LIST}}
+
+# 容器默认以当前用户身份运行（compose 的 user: "${HOST_UID:-0}:${HOST_GID:-0}"），
+# 避免挂载目录出现 root 属主文件（.pytest_cache/.ruff_cache 等）。
+# 需要 root 时（如容器内 pip install 到系统目录）：make shell HOST_UID=0 HOST_GID=0
+HOST_UID ?= $(shell id -u)
+HOST_GID ?= $(shell id -g)
+export HOST_UID HOST_GID
 
 .DEFAULT_GOAL := help
 
+# 注意：目标的说明必须写在 "## "（双井号+空格）之后，才会出现在 make help 中
 help: ## 显示所有可用目标
 	@grep -E '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-14s %s\n", $$1, $$2}'
 

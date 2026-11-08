@@ -1,7 +1,8 @@
-# 离线 Python 开发环境（devcontainer-src）
+# 离线 Python 开发环境（devcontainer）
 
-本目录由 GitHub Action `build-devcontainer` 生成，需配合镜像包
-`devcontainer-bundle_{{TAG}}.tgz` 在内网离线使用。
+本目录（`<应用根目录>/docs/devcontainer`）由 GitHub Action `build-devcontainer`
+生成、经 `install.sh` 安装，需配合镜像包 `devcontainer-bundle_{{TAG}}.tgz`
+在内网离线使用。**所有 make 命令都在本目录执行**。
 
 | 项目 | 值 |
 | --- | --- |
@@ -17,47 +18,78 @@
 前置要求：Docker >= 20.10（建议 23+），带 compose v2 插件（`docker compose version` 可执行），
 CPU 架构与上表平台一致。
 
-本目录内容建议复制到应用根目录，与业务代码同目录后即可直接使用下面的 Makefile：
-
-```bash
-tar xzf devcontainer-src_{{TAG}}.tgz -C ~/apps/myapp1 \
-    --strip-components=1 --skip-old-files   # 不覆盖已有业务文件
-cd ~/apps/myapp1
-```
-
 ```bash
 # 1. 导入镜像（Artifact 的 zip 解压后得到 tgz，可直接 load）
 docker load -i devcontainer-bundle_{{TAG}}.tgz
 
-# 2. 离线自检（镜像是否已导入、架构是否匹配）
-make check
+# 2. 安装（在 install.sh 与 devcontainer-src_{{TAG}}.tgz 所在目录执行，
+#    参数为你的项目根目录）
+bash install.sh ~/apps/myapp1
 
-# 3. 开发
+# 3. 离线自检（镜像是否已导入、架构是否匹配）
+cd ~/apps/myapp1/docs/devcontainer && make check
+
+# 4. 开发
 make shell        # 交互式 bash
 make lint         # ruff check .
 make compile      # python -m compileall -q .
 make test         # pytest -q
 
-# 4. 运行（--no-build，不联网）
+# 5. 运行（--no-build，不联网）
 make up && make logs
 make down         # 停止
 ```
 
 ## 说明
 
-- `Dockerfile` / `docker-compose.yaml` / `Makefile` / `requirements.txt`
-  均在外网构建时生成，请勿手工修改其中的镜像名与 TAG。
-- 复制到应用根目录时若有同名文件（如业务自带的 `requirements.txt` / `README.md`），
-  `cp -rn` 会保留业务文件；生成的同名文件不会覆盖它们。
+- `docker-compose.yaml` 由 `docker-compose.yaml.tpl` 渲染而来：安装时
+  `{{SRC_ROOT}}` 占位符被替换为你的项目根目录（绝对路径），整个根目录挂载为
+  容器 `/app`。需要调整挂载、端口等配置时直接改 `docker-compose.yaml`
+  （`.tpl` 保持原样，留作参考）。
+- `.tpl` 后缀确保该模板不会被 docker compose 自动发现，也不会与项目根目录下
+  你自己的 compose 配置发生 `-f` / `*.override.yaml` 合并（compose 对 ports
+  等列表只做并集、无法通过 override 移除）。
+- compose 项目名固定为 `<镜像前缀>-<项目目录名>`（如 `devcontainer-myapp1`），
+  同一台机器上安装多个应用互不冲突。
+- 容器默认以当前用户身份运行（Makefile 自动导出 `HOST_UID`/`HOST_GID`），
+  挂载目录不会出现 root 属主文件（`.pytest_cache` / `.ruff_cache` 等）。
+  容器内需要 root 时（如 `pip install` 到系统目录）：
+  `make shell HOST_UID=0 HOST_GID=0`。
+- 若项目根目录原本没有 `main.py`，install.sh 会复制一个占位入口（`make up`
+  默认运行 `python main.py`）。请替换为你的真实应用入口。
+- **离线补装 Python 包**：发现缺包时，在联网机器用 `scripts/pip/pip_download.py`
+  （本目录内）下载 wheel 到 `<应用根目录>/wheels/`，然后在本目录执行
+  `bash build.sh`——基于现有镜像生成 `addon-{{TAG}}` 新镜像（wheel 只在构建层
+  临时存在，不会增大镜像体积），按输出的 sed 命令切换 `docker-compose.yaml`
+  即可。详见下文「离线补装 Python 包」。
 - 本包**不含 `wheels/`**：所有 wheel 已在构建镜像时安装，并固化在镜像
-  `/wheels` 内（见下一条）。
-- 源码目录默认整目录挂载为容器 `/app`（见 compose 中 app/dev 服务的 `volumes`），
-  如需挂载其他目录请修改挂载路径。
-- 容器内离线安装额外依赖：`pip install --no-index --find-links=/wheels <pkg>`
-  （需要 root，即不设置 `HOST_UID`/`HOST_GID`）。
-- 挂载目录内产生 root 属主文件时，可在启动前导出
-  `export HOST_UID=$(id -u) HOST_GID=$(id -g)`，让容器以当前用户身份运行。
+  `/wheels` 内。容器内离线安装额外依赖：
+  `pip install --no-index --find-links=/wheels <pkg>`（需 root，即
+  `HOST_UID=0` 运行）。
 - `make build` 需要联网（apt/pip 源），离线机器请勿使用；镜像请统一通过 bundle 导入。
 - `make check` 可离线自检镜像是否已导入、架构是否匹配。
 - `make help` 查看全部可用目标。
 {{DEV_TOOLS_NOTE}}
+
+## 离线补装 Python 包（build.sh）
+
+构建时漏了的包、后来才需要的包，都可以在不联网的机器上补进镜像：
+
+```bash
+# 1. 联网机器：下载 wheel（生成 wheels/ 目录，含带 --no-index 头的 requirements.txt）
+python scripts/pip/pip_download.py <包名...> -d /tmp/wheels
+#    把 /tmp/wheels 整个目录拷回内网 <应用根目录>/wheels/
+
+# 2. 内网机器，本目录（docs/devcontainer）执行：
+bash build.sh            # 生成 <镜像名>:addon-{{TAG}}（可传参自定义新 TAG）
+
+# 3. 按输出的 sed 命令把 docker-compose.yaml 切到新镜像，然后：
+make up && make logs
+```
+
+说明：
+
+- `Dockerfile.addon` 基于现有镜像分层构建：wheel 复制到 `/tmp` 安装后同层删除，
+  不增大镜像体积；已装过的依赖 pip 自动跳过。
+- `wheels/` 下有 `requirements.txt` 就按清单装，否则装目录下全部 `*.whl`。
+- 回滚：重新 `docker load -i devcontainer-bundle_{{TAG}}.tgz` 即可恢复原镜像。

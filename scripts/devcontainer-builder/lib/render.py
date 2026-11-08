@@ -58,6 +58,52 @@ test: check-dev ## 运行 pytest
 
 _DEV_PHONY = "check-dev shell dev lint compile test "
 
+# Dockerfile.addon 中基于现有镜像的阶段（离线补装 Python 包，配合 build.sh）
+_ADDON_STAGE_TMPL = """\
+FROM {{BASE_IMAGE}} AS {{STAGE_NAME}}
+
+# wheels 只在本层临时存在：install 与 rm 同层执行，不增大最终镜像
+COPY wheels/ /tmp/addon-wheels/
+RUN set -eux; \\
+    if [ -f /tmp/addon-wheels/requirements.txt ]; then \\
+        pip install --no-index --find-links=/tmp/addon-wheels \\
+            -r /tmp/addon-wheels/requirements.txt; \\
+    else \\
+        pip install --no-index --find-links=/tmp/addon-wheels \\
+            /tmp/addon-wheels/*.whl; \\
+    fi; \\
+    rm -rf /tmp/addon-wheels
+"""
+
+
+def _addon_targets(p):
+    """(Dockerfile target, 基础镜像) 列表，与本次构建出的应用镜像一一对应。"""
+    targets = []
+    if p.dev_image_only:
+        targets.append(("addon-dev", p.dev_image))
+    else:
+        targets.append(("addon-prod", p.prod_image))
+        if p.build_dev_image:
+            targets.append(("addon-dev", p.dev_image))
+    return targets
+
+
+def render_dockerfile_addon(p):
+    stages = "\n\n".join(
+        _sub(_ADDON_STAGE_TMPL, {"BASE_IMAGE": image, "STAGE_NAME": target})
+        for target, image in _addon_targets(p)
+    )
+    return _sub(_load("Dockerfile.addon.tmpl"), {**_base_mapping(p),
+                                                 "ADDON_STAGES": stages})
+
+
+def render_build_sh(p):
+    """build.sh：docker build Dockerfile.addon，默认新 TAG 为 addon-<原TAG>。"""
+    calls = "\n".join(
+        f'build {target} "{image}"' for target, image in _addon_targets(p)
+    )
+    return _sub(_load("build.sh.tmpl"), {**_base_mapping(p), "BUILD_CALLS": calls})
+
 
 def _load(name):
     return (TEMPLATES_DIR / name).read_text(encoding="utf-8")
@@ -85,6 +131,7 @@ def _base_mapping(p):
         "APP_BUILD_TARGET": p.app_build_target,
         "APP_SOURCE_DIR": p.app_source_dir,
         "APP_VOLUME": json.dumps(p.mount_path),
+        "NEEDS_MAIN_PY": "1" if p.prod_command == "python main.py" else "0",
         "IMAGE_LIST": " ".join(p.image_refs),
         "DEV_IMAGE": p.dev_image,
         "PROD_COMMAND": p.prod_command,
@@ -192,8 +239,18 @@ def _app_options_block(p):
             lines.append(f"      - \"{p.app_port}:{p.app_port}\"\n")
     if p.env_file_list:
         lines.append("    env_file:\n")
-        lines.extend(f"      - {json.dumps(x)}\n" for x in p.env_file_list)
+        # env 文件默认相对应用根目录（{{SRC_ROOT}} 由 install.sh 替换）；
+        # 绝对路径原样保留
+        lines.extend(
+            f"      - {json.dumps(_env_file_path(x))}\n" for x in p.env_file_list
+        )
     return "".join(lines)
+
+
+def _env_file_path(path):
+    if path.startswith("/"):
+        return path
+    return "{{SRC_ROOT}}/" + path
 
 
 def _depends_on_block(p):
@@ -275,6 +332,21 @@ def render_requirements(p):
     return text
 
 
+def render_main_py():
+    """占位入口：install.sh 在应用根目录无 main.py 且启动命令为默认值时复制。"""
+    return _load("main.py.tmpl")
+
+
+def render_install_sh(p, out_file):
+    """渲染安装脚本到 dist/（独立 artifact，不进 src tgz）。"""
+    content = _sub(_load("install.sh.tmpl"), _base_mapping(p))
+    path = Path(out_file)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
 def render_src_readme(p):
     services = []
     if p.enable_nginx:
@@ -322,13 +394,21 @@ def render_all(p, staging):
 
     files = {
         "Dockerfile": render_dockerfile(p),
-        "docker-compose.yaml": render_compose(p),
+        # .tpl 后缀：不会被 docker compose 自动发现/被 -f 误用，
+        # 由 install.sh 渲染为 docker-compose.yaml（{{SRC_ROOT}} -> 应用根目录）
+        "docker-compose.yaml.tpl": render_compose(p),
         "Makefile": render_makefile(p),
         "requirements.txt": render_requirements(p),
+        "main.py": render_main_py(),
         "README.md": render_src_readme(p),
+        # 离线补装：wheel 打进现有镜像生成 addon 镜像
+        "Dockerfile.addon": render_dockerfile_addon(p),
+        "build.sh": render_build_sh(p),
     }
     for name, content in files.items():
         (staging / name).write_text(content, encoding="utf-8")
+    # 保留可执行位（tar 会随包保留；artifact zip 解压可能丢失，文档引导 bash 调用）
+    (staging / "build.sh").chmod(0o755)
     if p.enable_nginx and p.has_app_port:
         conf_dir = staging / "nginx" / "conf.d"
         conf_dir.mkdir(parents=True, exist_ok=True)

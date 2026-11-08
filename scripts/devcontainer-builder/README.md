@@ -20,12 +20,16 @@ scripts/devcontainer-builder/
     ├── Dockerfile.prod.tmpl       # prod 阶段（基础镜像 + APT/自定义命令 + 离线 pip install）
     ├── Dockerfile.dev.tmpl        # dev 阶段（FROM prod + 开发工具）
     ├── Dockerfile.devonly.tmpl    # 仅 dev 镜像模式的单阶段 Dockerfile
-    ├── compose.base.tmpl          # compose 骨架（app 服务 + 占位块）
+    ├── compose.base.tmpl          # compose 模板骨架（app 服务 + 占位块；输出为 .tpl）
     ├── compose.service.nginx.tmpl # nginx 服务子模板
     ├── compose.service.postgres.tmpl # postgres 服务子模板（含健康检查）
     ├── nginx.conf.tmpl            # nginx 反代配置（启用 nginx 且指定 app_port 时）
     ├── Makefile.tmpl              # make 目标（check/up/shell/lint/compile/test 等）
     ├── requirements.txt.tmpl      # pip 包清单
+    ├── main.py.tmpl               # 占位入口（install.sh 在应用根目录无 main.py 时复制）
+    ├── install.sh.tmpl            # 安装脚本（独立 artifact，不进 src tgz）
+    ├── Dockerfile.addon.tmpl      # 离线补装：基于现有镜像生成 addon 阶段（wheels 进 /tmp 同层删）
+    ├── build.sh.tmpl              # 离线补装入口（docker build Dockerfile.addon，默认 addon-<TAG>）
     └── README.src.tmpl            # src 产物内的快速上手说明
 ```
 
@@ -82,16 +86,37 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
 
 ## 主要设计点
 
+- **install.sh + compose 模板（.tpl）**：src 包内的 compose 文件名为
+  `docker-compose.yaml.tpl`（不会被 docker compose 自动发现 / 被 `-f` 误用，
+  与用户自己的 compose 配置隔离——compose 对 ports 等列表合并只做并集）。
+  `install.sh <应用根目录>` 解压 src 到 `<根>/docs/devcontainer/`，把
+  `{{SRC_ROOT}}` 渲染为根目录绝对路径（挂载为 /app）、生成 compose 项目名，
+  并在缺少 main.py 时放置占位入口（保证 `make up` 开箱即用）。
+- **离线补装（build.sh + Dockerfile.addon）**：src 包附带 addon 机制——把
+  wheel 放到 `<应用根目录>/wheels/`，`bash build.sh` 基于现有镜像逐个
+  `docker build --target` 生成 `<镜像名>:addon-<原TAG>` 新镜像。wheel 复制到
+  镜像 `/tmp/addon-wheels` 后在同一 RUN 层内安装并删除（不增大镜像）；构建
+  上下文为临时目录（只含 wheels），构建后自动清理。回滚 = 重新 docker load
+  原 bundle。
 - **多阶段 Dockerfile**：`prod`（运行时）与 `dev`（`FROM prod` + ruff/pytest
   等工具）在同文件内分阶段构建，compose 通过 `target` 区分；dev 服务挂
   `profiles: [dev]`，仅 `make shell/lint/test` 激活，不影响 `make up`。
+- **容器默认当前用户**：Makefile 自动导出 `HOST_UID=$(id -u)` /
+  `HOST_GID=$(id -g)`（可 `make shell HOST_UID=0 HOST_GID=0` 覆盖），避免
+  ruff/pytest/compileall 缓存（`.ruff_cache`/`.pytest_cache`/`__pycache__`）
+  以 root 属主污染挂载目录。
 - **仅 dev 镜像模式**（`dev_image_only=true`）：Dockerfile 渲染为单阶段 dev
   镜像，compose 的 app 服务直接使用该 dev 镜像并显式指定 `command`，Bundle
-  只包含这一个镜像（不再生成 prod 镜像文件）。
+  只包含这一个镜像（不再生成 prod 镜像文件）。app/dev 两个服务保留：prod+dev
+  模式两服务镜像本就不同，统一模板可避免生成器分支；dev 服务无
+  restart/ports/depends_on，工具型 `compose run` 不会误拉起外挂服务。
 - **CMD 而非 ENTRYPOINT**：prod/dev 镜像默认命令均通过 `CMD` 承载，
   `docker compose up` 时由 compose `command` 覆盖执行 `python main.py`，
-  `docker compose run dev` 时落到 dev 镜像的 `CMD ["bash"]`，互不冲突。
-- **镜像 TAG**：`<yyyymmdd-HHMMSS>`（UTC），与两个产物文件名的时间戳一致，
+  `docker compose run` 时落到 dev 镜像的 `CMD ["bash"]`，互不冲突。
+- **compose run 与 profile**：命令行显式指定的服务会自动激活其 profiles
+  （compose v2 行为），因此 `DEV_RUN` 无需 `--profile dev`；但
+  `make build`（`compose build`）需要 `--profile dev` 才会构建 dev 服务。
+- **镜像 TAG**：`<yyyymmdd-HHMMSS>`（UTC），与产物文件名的时间戳一致，
   保证 compose 引用与 `docker save` 的镜像名一一对应。
 - **glibc 语义**：基础镜像固定 slim-bookworm（glibc 2.36），glibc 参数仅决定
   pip download 请求的 manylinux 标签集合（目标 glibc 及以下全部标签）。

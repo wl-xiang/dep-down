@@ -175,8 +175,16 @@ class Params:
 
     @property
     def mount_path(self):
-        """容器 /app 的挂载源；SELinux Enforcing 主机可追加 :z 重打标签。"""
-        return f"{self.app_source_dir}:/app{':z' if self.selinux_relabel else ''}"
+        """容器 /app 的挂载源。{{SRC_ROOT}} 占位符由 install.sh 替换为
+        应用根目录绝对路径；app_source_dir 为根目录下的相对子目录（或绝对路径）。
+        SELinux Enforcing 主机可追加 :z 重打标签。"""
+        if self.app_source_dir == ".":
+            src = "{{SRC_ROOT}}"
+        elif self.app_source_dir.startswith("/"):
+            src = self.app_source_dir.rstrip("/") or "/"
+        else:
+            src = "{{SRC_ROOT}}/" + self.app_source_dir.strip("/")
+        return f"{src}:/app{':z' if self.selinux_relabel else ''}"
 
     @property
     def prod_command_args(self):
