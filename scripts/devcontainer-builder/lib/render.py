@@ -35,7 +35,7 @@ _DEV_SERVICE_TMPL = """\
 _DEV_MAKE_TARGETS = """\
 check-dev: ## 检查 dev 镜像是否已导入（离线环境不会自行构建）
 \t@docker image inspect {{DEV_IMAGE}} >/dev/null 2>&1 || { \\
-\t\techo "dev 镜像 {{DEV_IMAGE}} 未导入：请先 docker load 对应 bundle（或本次未构建 dev 镜像）"; \\
+\t\techo "dev 镜像 {{DEV_IMAGE}} 未导入：请先 docker load 镜像归档（或本次未构建 dev 镜像）"; \\
 \t\texit 1; \\
 \t}
 
@@ -77,30 +77,32 @@ RUN set -eux; \\
 
 
 def _addon_targets(p):
-    """(Dockerfile target, 基础镜像) 列表，与本次构建出的应用镜像一一对应。"""
+    """(Dockerfile target, 基础镜像, stage 名) 列表，与本次构建出的应用镜像一一对应。"""
     targets = []
     if p.dev_image_only:
-        targets.append(("addon-dev", p.dev_image))
+        targets.append(("addon-dev", p.dev_image, "dev"))
     else:
-        targets.append(("addon-prod", p.prod_image))
+        targets.append(("addon-prod", p.prod_image, "prod"))
         if p.build_dev_image:
-            targets.append(("addon-dev", p.dev_image))
+            targets.append(("addon-dev", p.dev_image, "dev"))
     return targets
 
 
 def render_dockerfile_addon(p):
     stages = "\n\n".join(
         _sub(_ADDON_STAGE_TMPL, {"BASE_IMAGE": image, "STAGE_NAME": target})
-        for target, image in _addon_targets(p)
+        for target, image, _stage in _addon_targets(p)
     )
     return _sub(_load("Dockerfile.addon.tmpl"), {**_base_mapping(p),
                                                  "ADDON_STAGES": stages})
 
 
 def render_build_sh(p):
-    """build.sh：docker build Dockerfile.addon，默认新 TAG 为 addon-<原TAG>。"""
+    """build.sh：docker build Dockerfile.addon，默认新 TAG 后缀为 addon-<时间戳>，
+    新镜像命名沿用 <前缀>:<stage>-<TAG 后缀>（如 <前缀>:dev-addon-<ts>）。"""
     calls = "\n".join(
-        f'build {target} "{image}"' for target, image in _addon_targets(p)
+        f'build {target} "{image}" "{stage}-$NEW_SUFFIX"'
+        for target, image, stage in _addon_targets(p)
     )
     return _sub(_load("build.sh.tmpl"), {**_base_mapping(p), "BUILD_CALLS": calls})
 
@@ -117,6 +119,8 @@ def _sub(text, mapping):
 
 def _base_mapping(p):
     return {
+        # TS = 构建时间戳（UTC+8，用于产物文件名）；TAG = 镜像 TAG 后缀（latest 或时间戳）
+        "TS": p.ts,
         "TAG": p.tag,
         "PLATFORM": p.platform,
         "DOCKER_PLATFORM": p.docker_platform,
@@ -127,6 +131,7 @@ def _base_mapping(p):
         "PIP_MIRROR": p.pip_mirror,
         "MIRROR_URL": p.mirror_url,
         "IMAGE_PREFIX": p.image_prefix,
+        "PROD_IMAGE": p.prod_image,
         "APP_IMAGE": p.app_image,
         "APP_BUILD_TARGET": p.app_build_target,
         "APP_SOURCE_DIR": p.app_source_dir,
@@ -239,8 +244,8 @@ def _app_options_block(p):
             lines.append(f"      - \"{p.app_port}:{p.app_port}\"\n")
     if p.env_file_list:
         lines.append("    env_file:\n")
-        # env 文件默认相对应用根目录（{{SRC_ROOT}} 由 install.sh 替换）；
-        # 绝对路径原样保留
+        # env 文件相对应用根目录（docker-compose.yml 由 install.sh 复制到项目根，
+        # ${SRC_ROOT:-./} 默认即项目根）；绝对路径原样保留
         lines.extend(
             f"      - {json.dumps(_env_file_path(x))}\n" for x in p.env_file_list
         )
@@ -250,7 +255,7 @@ def _app_options_block(p):
 def _env_file_path(path):
     if path.startswith("/"):
         return path
-    return "{{SRC_ROOT}}/" + path
+    return "${SRC_ROOT:-./}/" + path
 
 
 def _depends_on_block(p):
@@ -268,7 +273,10 @@ def _depends_on_block(p):
 def _nginx_service(p):
     mount = ""
     if p.has_app_port:
-        mount = "    volumes:\n      - ./nginx/conf.d:/etc/nginx/conf.d:ro\n"
+        # docker-compose.yml 位于项目根目录（install.sh 复制），反代配置相对其
+        # 所在的 docs/devcontainer 目录
+        mount = ("    volumes:\n"
+                 "      - ./docs/devcontainer/nginx/conf.d:/etc/nginx/conf.d:ro\n")
     return _sub(
         _load("compose.service.nginx.tmpl"),
         {**_base_mapping(p), "NGINX_CONF_MOUNT": mount},
@@ -395,7 +403,8 @@ def render_all(p, staging):
     files = {
         "Dockerfile": render_dockerfile(p),
         # .tpl 后缀：不会被 docker compose 自动发现/被 -f 误用，
-        # 由 install.sh 渲染为 docker-compose.yaml（{{SRC_ROOT}} -> 应用根目录）
+        # 由 install.sh 原样复制到项目根目录为 docker-compose.yml
+        # （模板内 ${SRC_ROOT:-./} / ${SRC_ROOT_NAME:-app} 由 compose 运行时解析）
         "docker-compose.yml.tpl": render_compose(p),
         "Makefile": render_makefile(p),
         "requirements.txt": render_requirements(p),

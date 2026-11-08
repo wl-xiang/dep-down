@@ -9,7 +9,7 @@ import os
 import re
 import shlex
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 # workflow platform 选项 → Docker --platform
 PLATFORM_MAP = {
@@ -41,6 +41,12 @@ PIP_MIRRORS = {
 
 # dev 镜像额外安装的工具（wheel 会随 wheels/ 一起下载）
 DEV_PIP_TOOLS = ("ruff", "pytest", "pytest-cov")
+
+# 产物/镜像时间戳统一使用东八区（UTC+8）
+TZ_CN = timezone(timedelta(hours=8), name="UTC+8")
+
+# image_tag 选项：latest（默认）或本次构建时间戳
+IMAGE_TAG_CHOICES = ("latest", "timestamp")
 
 IMAGE_PREFIX_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 
@@ -86,7 +92,8 @@ class Params:
     app_port: str
     env_file: str
     selinux_relabel: bool
-    tag: str
+    image_tag: str
+    ts: str
 
     # ---------- 派生值 ----------
 
@@ -133,12 +140,19 @@ class Params:
         return list(DEV_PIP_TOOLS) if self.dev_tools_enabled else []
 
     @property
+    def tag(self):
+        """镜像 TAG 后缀：latest（默认）或本次构建时间戳（UTC+8）。"""
+        return self.ts if self.image_tag == "timestamp" else "latest"
+
+    @property
     def prod_image(self):
-        return f"{self.image_prefix}-prod:{self.tag}"
+        """prod 镜像：<前缀>:prod-<TAG 后缀>。"""
+        return f"{self.image_prefix}:prod-{self.tag}"
 
     @property
     def dev_image(self):
-        return f"{self.image_prefix}-dev:{self.tag}"
+        """dev 镜像：<前缀>:dev-<TAG 后缀>。"""
+        return f"{self.image_prefix}:dev-{self.tag}"
 
     @property
     def app_image(self):
@@ -175,15 +189,16 @@ class Params:
 
     @property
     def mount_path(self):
-        """容器 /app 的挂载源。{{SRC_ROOT}} 占位符由 install.sh 替换为
-        应用根目录绝对路径；app_source_dir 为根目录下的相对子目录（或绝对路径）。
+        """容器 /app 的挂载源。${SRC_ROOT:-./} 由 docker compose 在运行时解析
+        （默认 ./ = docker-compose.yml 所在的项目根目录）；app_source_dir 为
+        根目录下的相对子目录（或绝对路径）。
         SELinux Enforcing 主机可追加 :z 重打标签。"""
         if self.app_source_dir == ".":
-            src = "{{SRC_ROOT}}"
+            src = "${SRC_ROOT:-./}"
         elif self.app_source_dir.startswith("/"):
             src = self.app_source_dir.rstrip("/") or "/"
         else:
-            src = "{{SRC_ROOT}}/" + self.app_source_dir.strip("/")
+            src = "${SRC_ROOT:-./}/" + self.app_source_dir.strip("/")
         return f"{src}:/app{':z' if self.selinux_relabel else ''}"
 
     @property
@@ -217,7 +232,8 @@ def load():
         app_port=_env("APP_PORT", ""),
         env_file=_env("ENV_FILE", ""),
         selinux_relabel=_env_bool("SELINUX_RELABEL", False),
-        tag=datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S"),
+        image_tag=_env("IMAGE_TAG", "latest"),
+        ts=datetime.now(TZ_CN).strftime("%Y%m%d-%H%M%S"),
     )
     return validate(params)
 
@@ -240,6 +256,10 @@ def validate(p):
     if p.pip_mirror not in PIP_MIRRORS:
         raise ParamError(
             f"不支持的 pip_mirror: {p.pip_mirror!r}，可选: {', '.join(PIP_MIRRORS)}"
+        )
+    if p.image_tag not in IMAGE_TAG_CHOICES:
+        raise ParamError(
+            f"不支持的 image_tag: {p.image_tag!r}，可选: {', '.join(IMAGE_TAG_CHOICES)}"
         )
     if p.app_depends_on_nginx and not p.enable_nginx:
         raise ParamError("app_depends_on_nginx=true 需要同时设置 enable_nginx=true")

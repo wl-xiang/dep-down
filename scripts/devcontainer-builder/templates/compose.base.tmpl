@@ -1,11 +1,13 @@
 # 由 scripts/devcontainer-builder 生成，请勿手工编辑。
-# 平台: {{DOCKER_PLATFORM}} | 镜像 TAG: {{TAG}}
-# compose 配置：.tpl 模板由 install.sh 渲染为 docker-compose.yaml——应用根目录
-# 以绝对路径挂载为容器 /app，项目名固定为 <镜像前缀>-<应用根目录名>。
-# .tpl 模板不会被 docker compose 自动发现或被 -f 误用，与用户自己的 compose
-# 配置互不影响；需要调整配置时直接改渲染后的 docker-compose.yaml。
-# 离线使用：镜像已由 bundle 导入，pull_policy=never + make up --no-build 不会触发任何联网。
-name: {{IMAGE_PREFIX}}-{{SRC_ROOT_NAME}}
+# 平台: {{DOCKER_PLATFORM}} | 镜像 TAG: {{TAG}}（时间戳: {{TS}}）
+# 本模板由 install.sh 原样复制到项目根目录为 docker-compose.yml（去掉 .tpl 后缀）。
+# 模板内两个环境变量由 docker compose 在运行时解析（冒号杠默认值语法），
+# 可用环境变量覆盖：
+#   ${SRC_ROOT:-./}       -> 应用根目录，默认 ./ = docker-compose.yml 所在的项目根目录
+#   ${SRC_ROOT_NAME:-app} -> compose 项目名后缀，默认 app
+# 离线使用：镜像已由 devcontainer-docker-images_{{TS}}.tgz 导入，
+# pull_policy=never + make up --no-build 不会触发任何联网。
+name: {{IMAGE_PREFIX}}-${SRC_ROOT_NAME:-app}
 services:
   app:
     image: {{APP_IMAGE}}
