@@ -57,6 +57,11 @@ make down         # 停止
   `make shell HOST_UID=0 HOST_GID=0`。
 - 若项目根目录原本没有 `main.py`，install.sh 会复制一个占位入口（`make up`
   默认运行 `python main.py`）。请替换为你的真实应用入口。
+- **离线补装 Python 包**：发现缺包时，在联网机器用 `scripts/pip/pip_download.py`
+  （本目录内）下载 wheel 到 `<应用根目录>/wheels/`，然后在本目录执行
+  `bash build.sh`——基于现有镜像生成 `addon-{{TAG}}` 新镜像（wheel 只在构建层
+  临时存在，不会增大镜像体积），按输出的 sed 命令切换 `docker-compose.yaml`
+  即可。详见下文「离线补装 Python 包」。
 - 本包**不含 `wheels/`**：所有 wheel 已在构建镜像时安装，并固化在镜像
   `/wheels` 内。容器内离线安装额外依赖：
   `pip install --no-index --find-links=/wheels <pkg>`（需 root，即
@@ -65,3 +70,26 @@ make down         # 停止
 - `make check` 可离线自检镜像是否已导入、架构是否匹配。
 - `make help` 查看全部可用目标。
 {{DEV_TOOLS_NOTE}}
+
+## 离线补装 Python 包（build.sh）
+
+构建时漏了的包、后来才需要的包，都可以在不联网的机器上补进镜像：
+
+```bash
+# 1. 联网机器：下载 wheel（生成 wheels/ 目录，含带 --no-index 头的 requirements.txt）
+python scripts/pip/pip_download.py <包名...> -d /tmp/wheels
+#    把 /tmp/wheels 整个目录拷回内网 <应用根目录>/wheels/
+
+# 2. 内网机器，本目录（docs/devcontainer）执行：
+bash build.sh            # 生成 <镜像名>:addon-{{TAG}}（可传参自定义新 TAG）
+
+# 3. 按输出的 sed 命令把 docker-compose.yaml 切到新镜像，然后：
+make up && make logs
+```
+
+说明：
+
+- `Dockerfile.addon` 基于现有镜像分层构建：wheel 复制到 `/tmp` 安装后同层删除，
+  不增大镜像体积；已装过的依赖 pip 自动跳过。
+- `wheels/` 下有 `requirements.txt` 就按清单装，否则装目录下全部 `*.whl`。
+- 回滚：重新 `docker load -i devcontainer-bundle_{{TAG}}.tgz` 即可恢复原镜像。

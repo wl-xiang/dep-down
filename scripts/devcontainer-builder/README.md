@@ -28,6 +28,8 @@ scripts/devcontainer-builder/
     ├── requirements.txt.tmpl      # pip 包清单
     ├── main.py.tmpl               # 占位入口（install.sh 在应用根目录无 main.py 时复制）
     ├── install.sh.tmpl            # 安装脚本（独立 artifact，不进 src tgz）
+    ├── Dockerfile.addon.tmpl      # 离线补装：基于现有镜像生成 addon 阶段（wheels 进 /tmp 同层删）
+    ├── build.sh.tmpl              # 离线补装入口（docker build Dockerfile.addon，默认 addon-<TAG>）
     └── README.src.tmpl            # src 产物内的快速上手说明
 ```
 
@@ -90,6 +92,12 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   `install.sh <应用根目录>` 解压 src 到 `<根>/docs/devcontainer/`，把
   `{{SRC_ROOT}}` 渲染为根目录绝对路径（挂载为 /app）、生成 compose 项目名，
   并在缺少 main.py 时放置占位入口（保证 `make up` 开箱即用）。
+- **离线补装（build.sh + Dockerfile.addon）**：src 包附带 addon 机制——把
+  wheel 放到 `<应用根目录>/wheels/`，`bash build.sh` 基于现有镜像逐个
+  `docker build --target` 生成 `<镜像名>:addon-<原TAG>` 新镜像。wheel 复制到
+  镜像 `/tmp/addon-wheels` 后在同一 RUN 层内安装并删除（不增大镜像）；构建
+  上下文为临时目录（只含 wheels），构建后自动清理。回滚 = 重新 docker load
+  原 bundle。
 - **多阶段 Dockerfile**：`prod`（运行时）与 `dev`（`FROM prod` + ruff/pytest
   等工具）在同文件内分阶段构建，compose 通过 `target` 区分；dev 服务挂
   `profiles: [dev]`，仅 `make shell/lint/test` 激活，不影响 `make up`。

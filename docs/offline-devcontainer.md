@@ -96,6 +96,8 @@ devcontainer-src/
 ├── Makefile                     # check/up/down/shell/lint/compile/test 等
 ├── main.py                      # 占位入口（应用根目录无 main.py 时由 install.sh 复制）
 ├── requirements.txt             # pip 包清单
+├── Dockerfile.addon             # 离线补装：基于现有镜像把 wheels/ 打进 addon 镜像
+├── build.sh                     # 离线补装入口（docker build Dockerfile.addon）
 ├── nginx/conf.d/                # 仅 enable_nginx 且指定 app_port 时生成反代配置
 ├── scripts/                     # 仓库随附的离线下载工具（pip/npm）
 └── README.md                    # 快速上手说明
@@ -162,6 +164,40 @@ make up
 make logs       # 跟随日志
 make down       # 停止
 ```
+
+## 离线补装 Python 包（build.sh + Dockerfile.addon）
+
+构建时漏了的包、后来才需要的包，都可以在**不联网**的内网机器上补进镜像，
+无需重新跑一次 Action：
+
+```bash
+# 1. 联网机器：下载缺的包为 wheel（docs/devcontainer/scripts/pip/ 即本工具）
+python scripts/pip/pip_download.py <包名...> -d /tmp/wheels
+#    产物含 *.whl 和带 --no-index 头的 requirements.txt
+#    把 /tmp/wheels 整个目录拷回内网 <应用根目录>/wheels/
+
+# 2. 内网机器，在 <应用根目录>/docs/devcontainer 下执行：
+bash build.sh [新TAG]        # 新TAG 默认 addon-<原TAG>
+
+# 3. 按输出的 sed 命令把 docker-compose.yaml 切换到新镜像（如
+#    devcontainer-dev:addon-20260101-120000），然后：
+make up && make logs
+```
+
+工作原理与说明：
+
+- `Dockerfile.addon` 按构建模式对每个应用镜像生成一个阶段（prod+dev 模式
+  分别基于 prod / dev 镜像；仅 dev 镜像模式只有 dev），`build.sh` 逐个
+  `docker build --target` 生成 `<镜像名>:addon-<原TAG>`。
+- wheel 通过临时构建上下文复制到镜像内 `/tmp/addon-wheels`，`pip install
+  --no-index --find-links` 安装后**同一 RUN 层内删除**——不会增大最终镜像
+  体积；已在基础镜像中安装的依赖 pip 自动跳过。
+- `wheels/` 下有 `requirements.txt` 时按清单安装（`--no-index` 头保证不
+  联网），否则安装目录下全部 `*.whl`。
+- 构建上下文是临时目录（只含 wheels），不会把整个应用目录发给 docker
+  daemon；构建结束自动清理。
+- 回滚：重新 `docker load -i devcontainer-bundle_<原TAG>.tgz` 即可恢复
+  原镜像 TAG。
 
 ## Makefile 目标
 
@@ -269,7 +305,9 @@ make down       # 停止
 - dev 工具（ruff/pytest/pytest-cov）的 wheel 会在构建 dev 镜像时一并下载。
 - **业务依赖必须在 `pip_packages` 中显式列出**（构建端拿不到业务代码，无法
   自动解析业务 `requirements.txt`）。漏装会在离线运行时表现为
-  `ModuleNotFoundError`，而内网无法现场安装（`/wheels` 只含构建时下载的包）。
+  `ModuleNotFoundError`；此时可用 `build.sh` 离线补装（见「离线补装
+  Python 包」），或临时在容器内 `pip install --no-index --find-links=/wheels
+  <pkg>`。
 
 ## FAQ
 
@@ -328,6 +366,11 @@ arm64 构建通过 QEMU 模拟执行，速度约为原生 1/5~1/10，属正常�
 **Q: 某个 pip 包下载失败（No matching distribution）？**
 多为该包无目标平台的 wheel（只有 sdist）。改用 `custom_install_cmd` 预编译，
 或换用 `platform`/`python_version` 组合。
+
+**Q: 离线运行时报 `ModuleNotFoundError`，缺的包怎么补？**
+两步：联网机器用 `scripts/pip/pip_download.py` 下载该包 wheel 拷到
+`<应用根目录>/wheels/`，内网在 `docs/devcontainer` 下执行 `bash build.sh`
+生成 addon 镜像并按提示切换 compose。详见「离线补装 Python 包」。
 
 **Q: 如何使用私有 PyPI？**
 第一版未内置私有源选项。可 Fork 后在 `scripts/devcontainer-builder/lib/params.py`

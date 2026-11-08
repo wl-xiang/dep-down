@@ -181,6 +181,11 @@ jobs:
             || { echo "::error::src 包缺少 docker-compose.yaml.tpl"; exit 1; }
           grep -q 'devcontainer-src/main.py$' /tmp/src_tgz.list \
             || { echo "::error::src 包缺少占位 main.py"; exit 1; }
+          # 离线补装机制（build.sh + Dockerfile.addon）
+          grep -q 'devcontainer-src/Dockerfile.addon$' /tmp/src_tgz.list \
+            || { echo "::error::src 包缺少 Dockerfile.addon"; exit 1; }
+          grep -q 'devcontainer-src/build.sh$' /tmp/src_tgz.list \
+            || { echo "::error::src 包缺少 build.sh"; exit 1; }
           echo "--- checksum (与 Summary 表格中的 SHA256 对比) ---"
           sha256sum "${{ steps.build.outputs.src_tgz }}"
           if [ -n "${{ steps.build.outputs.install_sh }}" ]; then
@@ -193,6 +198,13 @@ jobs:
             echo "::error::install.sh 未生成"
             exit 1
           fi
+          echo "--- build.sh (from src tgz) ---"
+          tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/build.sh > /tmp/build.sh
+          bash -n /tmp/build.sh
+          # tar 需保留可执行位（artifact zip 解压可能丢失，文档引导 bash 调用）
+          tar tvzf "${{ steps.build.outputs.src_tgz }}" devcontainer-src/build.sh \
+            | grep -q '^-[rwx-]*x' \
+            || { echo "::error::src 包内 build.sh 无可执行权限"; exit 1; }
           if [ -n "${{ steps.build.outputs.bundle_tgz }}" ]; then
             echo "--- ${{ steps.build.outputs.bundle_name }} ---"
             # bundle 是 gzip 压缩的镜像归档：根目录必须能直接看到 manifest.json（或 OCI index.json）
