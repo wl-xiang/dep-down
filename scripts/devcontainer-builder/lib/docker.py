@@ -39,15 +39,8 @@ def pull_service_images(p):
 
 
 def image_list(p):
-    """本次需要 docker save 的镜像清单。"""
-    images = [p.prod_image]
-    if p.build_dev_image:
-        images.append(p.dev_image)
-    if p.enable_nginx:
-        images.append("nginx:stable")
-    if p.enable_postgres:
-        images.append("postgres:16")
-    return images
+    """本次需要 docker save 的镜像清单（仅 dev 镜像模式只含一个 dev 镜像）。"""
+    return p.image_refs
 
 
 def save_images(images, out_file):

@@ -23,7 +23,7 @@ def sha256_of(path):
 def build_markdown(p, results):
     """按计划书 4.7 生成 Summary markdown。"""
     wheels_count = results.get("wheels_count", 0)
-    images = results.get("images") or [p.prod_image]
+    images = results.get("images") or [p.app_image]
     src_tgz = results.get("src_tgz")
     bundle_tgz = results.get("bundle_tgz")
     skipped_docker = results.get("skipped_docker", False)
@@ -39,6 +39,13 @@ def build_markdown(p, results):
     out.append(f"| glibc (wheel 标签) | `{p.glibc_version}` → `{p.pip_platform_tag}` |")
     out.append(f"| pip 镜像源 | `{p.pip_mirror}` ({p.mirror_url}) |")
     out.append(f"| wheels 数量 | {wheels_count} |")
+    if p.dev_image_only:
+        image_mode = "仅 dev 镜像（部署与开发共用，Bundle 只含该镜像）"
+    elif p.build_dev_image:
+        image_mode = "prod + dev 两个镜像"
+    else:
+        image_mode = "仅 prod 镜像"
+    out.append(f"| 镜像模式 | {image_mode} |")
     out.append(f"| 应用监听端口 | {('`' + p.app_port + '`') if p.has_app_port else '(未指定)'} |")
     out.append(f"| env_file | {', '.join(p.env_file_list) if p.env_file_list else '(无)'} |")
     out.append(f"| SELinux 重打标签 (:z) | {_yes_no(p.selinux_relabel)} |")
@@ -128,7 +135,7 @@ def build_markdown(p, results):
     out.append("make check")
     out.append("```")
     out.append("")
-    if p.build_dev_image:
+    if p.dev_tools_enabled:
         out.append("5. 开发调试:")
         out.append("")
         out.append("```bash")

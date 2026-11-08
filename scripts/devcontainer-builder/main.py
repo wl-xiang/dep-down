@@ -49,7 +49,7 @@ def main():
           f"glibc={p.glibc_version} ({p.pip_platform_tag}) "
           f"mirror={p.pip_mirror} tag={p.tag}")
     print(f"  pip_packages={p.pip_package_list} apt_packages={p.apt_package_list} "
-          f"build_dev_image={p.build_dev_image}")
+          f"build_dev_image={p.build_dev_image} dev_image_only={p.dev_image_only}")
     print(f"  nginx={p.enable_nginx}(depends={p.app_depends_on_nginx}) "
           f"postgres={p.enable_postgres}(depends={p.app_depends_on_postgres})")
 
@@ -72,11 +72,16 @@ def main():
     if skip_docker:
         print("== DEVCONTAINER_SKIP_DOCKER=1，跳过 docker 构建/保存（本地联调用）==")
     else:
-        print("== docker build (prod) ==")
-        docker_mod.build_image(p, staging, "prod", p.prod_image)
-        if p.build_dev_image:
-            print("== docker build (dev) ==")
+        if p.dev_image_only:
+            # 只构建 dev 镜像：部署与开发共用，Bundle 也仅包含这一个镜像
+            print("== docker build (dev only) ==")
             docker_mod.build_image(p, staging, "dev", p.dev_image)
+        else:
+            print("== docker build (prod) ==")
+            docker_mod.build_image(p, staging, "prod", p.prod_image)
+            if p.build_dev_image:
+                print("== docker build (dev) ==")
+                docker_mod.build_image(p, staging, "dev", p.dev_image)
         docker_mod.pull_service_images(p)
         images = docker_mod.image_list(p)
         bundle_tgz = REPO_ROOT / "dist" / f"devcontainer-bundle_{p.tag}.tgz"

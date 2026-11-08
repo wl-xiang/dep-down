@@ -13,7 +13,7 @@ Python 环境**。
 参数解析与校验
 模板渲染 (Dockerfile/compose/Makefile)
 pip download → wheels/
-docker build (prod → dev)                  docker load bundle tgz
+docker build (prod → dev / 仅 dev)         docker load bundle tgz
 docker pull (nginx/postgres, 按需)         解压 src → 复制到应用根目录
 打包 src tgz + bundle tgz ──── 传输 ────→  make check / shell / lint / compile / test
 上传 Artifacts + 写 Summary                make up (python main.py)
@@ -48,15 +48,16 @@ docker pull (nginx/postgres, 按需)         解压 src → 复制到应用根�
 | `glibc_version` | choice | `2.17` / `2.28` / `2.34` | `2.28` | 控制 pip download 选用的 manylinux 标签（见「glibc 语义」） |
 | `pip_mirror` | choice | `pypi.org` / `aliyun` / `thu` | `thu` | pip 下载镜像源 |
 | `pip_packages` | string | 用 `$` 分隔，如 `numpy$pandas$requests` | 空 | 附加 pip 包（空 = 无附加依赖） |
-| `apt_packages` | string | 空格分隔，如 `git vim curl` | 空 | prod 镜像内安装的 APT 工具 |
-| `custom_install_cmd` | string | shell 命令 | 空 | 个性化安装命令，在 prod 镜像内 `RUN` 执行 |
+| `apt_packages` | string | 空格分隔，如 `git vim curl` | 空 | 镜像内安装的 APT 工具 |
+| `custom_install_cmd` | string | shell 命令 | 空 | 个性化安装命令，在镜像内 `RUN` 执行 |
 | `enable_nginx` | boolean | — | `false` | 启用 nginx 外挂服务（8080:80） |
 | `enable_postgres` | boolean | — | `false` | 启用 postgres 外挂服务（postgres:16，数据卷 pgdata） |
 | `app_depends_on_nginx` | boolean | — | `false` | app 服务 `depends_on` nginx（需先启用 nginx） |
 | `app_depends_on_postgres` | boolean | — | `false` | app 服务 `depends_on` postgres（需先启用 postgres） |
 | `prod_command` | string | 命令行 | `python main.py` | prod 服务启动命令 |
 | `build_dev_image` | boolean | — | `true` | 是否同时构建 dev 镜像（ruff/pytest 等，继承 prod） |
-| `image_prefix` | string | 小写字母/数字/`._-` | `devcontainer` | 镜像名前缀（生成 `<prefix>-prod:<tag>` / `<prefix>-dev:<tag>`） |
+| `dev_image_only` | boolean | — | `false` | 仅构建 dev 镜像：不再区分 prod/dev 两个镜像，部署（`make up`）也使用 dev 镜像，Bundle 只包含该 dev 镜像（优先于 `build_dev_image`） |
+| `image_prefix` | string | 小写字母/数字/`._-` | `devcontainer` | 镜像名前缀（生成 `<prefix>-prod:<tag>` / `<prefix>-dev:<tag>`；仅 dev 镜像模式只有 `<prefix>-dev:<tag>`） |
 | `app_source_dir` | string | 相对/绝对路径 | `.` | 挂载进容器 `/app` 的源码目录（相对 compose 文件；不支持 `~`） |
 | `app_port` | string | 端口号 | 空 | 应用在容器内监听的端口。设置后：无 nginx 时映射宿主机同端口；启用 nginx 时由 nginx 反代，app 仅容器网络暴露 |
 | `env_file` | string | 逗号/空格分隔 | 空 | 注入 app 服务的 env 文件（相对 compose 文件），如 `.env` |
@@ -85,7 +86,7 @@ docker pull (nginx/postgres, 按需)         解压 src → 复制到应用根�
 
 ```
 devcontainer-src/
-├── Dockerfile              # 多阶段：prod（+ dev，若构建）
+├── Dockerfile              # 多阶段 prod/dev；仅 dev 镜像模式下为单阶段 dev
 ├── docker-compose.yaml     # app + dev(profile) + 外挂服务
 ├── Makefile                # check/up/down/shell/lint/compile/test 等
 ├── requirements.txt        # pip 包清单
@@ -105,7 +106,8 @@ devcontainer-src/
 ### devcontainer-bundle_<yyyymmdd-HHMMSS>.tgz
 
 该文件是 `docker save` 输出经 gzip 压缩得到的镜像归档（prod、dev、nginx、postgres，
-按本次参数），可直接 `docker load -i` 导入，无需再解一层 tar。文件名时间戳与镜像
+按本次参数），可直接 `docker load -i` 导入，无需再解一层 tar。勾选 `dev_image_only`
+时归档中只有一个 dev 镜像（外加按需启用的 nginx/postgres）。文件名时间戳与镜像
 TAG 一致；Summary 中同时给出 SHA256，便于校验传输完整性。
 
 ## 内网使用步骤
@@ -151,8 +153,9 @@ make down       # 停止
 | `make test` | pytest -q |
 | `make package-src` | 重新打包当前源码目录为 tgz |
 
-> `shell/dev/lint/compile/test` 依赖 dev 镜像（`build_dev_image=true` 时才有），
-> 通过 compose 的 `dev` profile 激活，不影响 `make up` 的 prod 行为。
+> `shell/dev/lint/compile/test` 依赖 dev 镜像（`build_dev_image=true` 或
+> `dev_image_only=true` 时才有），通过 compose 的 `dev` profile 激活，不影响
+> `make up` 的运行行为。
 
 ## 外挂服务
 
@@ -190,6 +193,10 @@ make down       # 停止
 - 镜像使用 `CMD`（而非 `ENTRYPOINT`）承载默认命令：`make up` 时 compose 的
   `command` 直接覆盖 CMD 执行 `python main.py`；`make shell` 通过 dev 镜像的
   `CMD ["bash"]` 进入交互终端，两者互不干扰。
+- 勾选 `dev_image_only` 时不再生成两个镜像：Dockerfile 只有单阶段 `dev`，
+  compose 的 app 服务直接引用该 dev 镜像并显式写入 `command`（镜像 CMD 为
+  bash），`make up` 与 `make shell/lint/test` 共用同一个镜像；Bundle 中也只
+  保存这一个镜像。
 - `wheels/` 在构建时被复制到镜像 `/wheels` 并保留下来（构建上下文中的
   `wheels/` 不会进入发布包），内网可在容器内继续离线安装：
   `pip install --no-index --find-links=/wheels <pkg>`。
@@ -254,8 +261,9 @@ arm64 构建通过 QEMU 模拟执行，速度约为原生 1/5~1/10，属正常�
 的 `PIP_MIRRORS` 中增加条目（含认证 URL），或经镜像反代公开化。
 
 **Q: bundle 体积偏大？**
-bundle 含 prod+dev+外挂服务镜像，几百 MB 到 1GB+ 属正常。后续可引入分层/增量
-导出方案优化；Summary 中记录了每次产物大小作为基线。
+bundle 含 prod+dev（或仅 dev）+外挂服务镜像，几百 MB 到 1GB+ 属正常。勾选
+`dev_image_only` 可少打一个 prod 镜像；后续可引入分层/增量导出方案优化；
+Summary 中记录了每次产物大小作为基线。
 
 **Q: 内网 Docker / Compose 版本较老？**
 建议 Docker >= 20.10（23+ 更稳妥，兼容 containerd image store 导出的归档）、
