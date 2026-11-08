@@ -7,9 +7,12 @@
        requirements.txt / main.py 占位 / install.sh
     3. lib/pip.py 复用 pip_download 逻辑下载 wheels/
     4. lib/docker.py buildx 构建 prod(/dev)、拉取外挂镜像、docker save 直出 gzip
-    5. lib/package.py 打包 devcontainer-src_<ts>.tgz；bundle 已在上一步直出；
-       install.sh 写入 dist/（与 src tgz 同打成一个 src artifact zip，不进 tgz）
-    6. lib/summary.py 写 GITHUB_STEP_SUMMARY / GITHUB_OUTPUT
+    5. lib/package.py 打包 devcontainer-src_<ts>.tgz；镜像归档
+       devcontainer-docker-images_<ts>.tgz 已在上一步直出；
+       install.sh 写入 dist/
+    6. lib/summary.py 写 GITHUB_STEP_SUMMARY / GITHUB_OUTPUT，
+       上传唯一 Artifact：devcontainer-bundle_<ts>（zip，内含镜像归档 tgz、
+       src tgz 与 install.sh 三个文件）
 
 本地联调可设置 DEVCONTAINER_SKIP_DOCKER=1 跳过 docker 步骤。
 """
@@ -49,7 +52,7 @@ def main():
     print("== 参数 ==")
     print(f"  platform={p.docker_platform} python={p.python_version} "
           f"glibc={p.glibc_version} ({p.pip_platform_tag}) "
-          f"mirror={p.pip_mirror} tag={p.tag}")
+          f"mirror={p.pip_mirror} ts={p.ts} (UTC+8) image_tag={p.tag}")
     print(f"  pip_packages={p.pip_package_list} apt_packages={p.apt_package_list} "
           f"build_dev_image={p.build_dev_image} dev_image_only={p.dev_image_only}")
     print(f"  nginx={p.enable_nginx}(depends={p.app_depends_on_nginx}) "
@@ -70,12 +73,12 @@ def main():
     # 3. docker 构建 / 拉取 / 导出
     skip_docker = os.environ.get("DEVCONTAINER_SKIP_DOCKER", "").strip().lower() in SKIP_DOCKER_VALUES
     images = []
-    bundle_tgz = None
+    images_tgz = None
     if skip_docker:
         print("== DEVCONTAINER_SKIP_DOCKER=1，跳过 docker 构建/保存（本地联调用）==")
     else:
         if p.dev_image_only:
-            # 只构建 dev 镜像：部署与开发共用，Bundle 也仅包含这一个镜像
+            # 只构建 dev 镜像：部署与开发共用，镜像归档也仅包含这一个镜像
             print("== docker build (dev only) ==")
             docker_mod.build_image(p, staging, "dev", p.dev_image)
         else:
@@ -86,34 +89,34 @@ def main():
                 docker_mod.build_image(p, staging, "dev", p.dev_image)
         docker_mod.pull_service_images(p)
         images = docker_mod.image_list(p)
-        bundle_tgz = REPO_ROOT / "dist" / f"devcontainer-bundle_{p.tag}.tgz"
+        images_tgz = REPO_ROOT / "dist" / f"devcontainer-docker-images_{p.ts}.tgz"
         print("== docker save (gzip) ==")
-        docker_mod.save_images(images, bundle_tgz)
+        docker_mod.save_images(images, images_tgz)
 
     # 4. 打包产物
     # wheels/ 已在镜像构建阶段装入（镜像内 /wheels），不再随 src 产物分发；
     # 同时把 Dockerfile 改写为不含 wheels/ 的联网重建版本，避免引用不存在的目录
     shutil.rmtree(staging / "wheels", ignore_errors=True)
     render_mod.render_src_dockerfile(p, staging)
-    src_tgz = REPO_ROOT / "dist" / f"devcontainer-src_{p.tag}.tgz"
+    src_tgz = REPO_ROOT / "dist" / f"devcontainer-src_{p.ts}.tgz"
     package_mod.make_src_tgz(staging, src_tgz)
     print(f"== src 产物: {src_tgz} "
           f"({package_mod.human_size(src_tgz.stat().st_size)}) ==")
 
-    # install.sh：独立 artifact（渲染 compose .tpl、解压 src 包到 docs/devcontainer）
+    # install.sh：独立文件（与两个 tgz 一同放进唯一的 bundle Artifact zip）
     install_sh = render_mod.render_install_sh(
         p, REPO_ROOT / "dist" / "install.sh"
     )
     print(f"== install 脚本: {install_sh} ==")
 
-    if bundle_tgz is not None:
-        print(f"== bundle 产物: {bundle_tgz} "
-              f"({package_mod.human_size(bundle_tgz.stat().st_size)}) ==")
+    if images_tgz is not None:
+        print(f"== 镜像归档产物: {images_tgz} "
+              f"({package_mod.human_size(images_tgz.stat().st_size)}) ==")
 
     # 5. Summary / Outputs
     results = {
         "src_tgz": src_tgz,
-        "bundle_tgz": bundle_tgz,
+        "images_tgz": images_tgz,
         "install_sh": install_sh,
         "images": images,
         "wheels_count": wheels_count,

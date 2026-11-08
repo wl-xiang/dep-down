@@ -27,9 +27,9 @@ scripts/devcontainer-builder/
     ├── Makefile.tmpl              # make 目标（check/up/shell/lint/compile/test 等）
     ├── requirements.txt.tmpl      # pip 包清单
     ├── main.py.tmpl               # 占位入口（install.sh 在应用根目录无 main.py 时复制）
-    ├── install.sh.tmpl            # 安装脚本（与 src tgz 同打成一个 src artifact，不进 tgz）
+    ├── install.sh.tmpl            # 安装脚本（与两个 tgz 一同放进唯一的 bundle Artifact zip）
     ├── Dockerfile.addon.tmpl      # 离线补装：基于现有镜像生成 addon 阶段（wheels 进 /tmp 同层删）
-    ├── build.sh.tmpl              # 离线补装入口（docker build Dockerfile.addon，默认 addon-<TAG>）
+    ├── build.sh.tmpl              # 离线补装入口（docker build Dockerfile.addon，默认后缀 addon-<时间戳>）
     └── README.src.tmpl            # src 产物内的快速上手说明
 ```
 
@@ -50,8 +50,9 @@ scripts/devcontainer-builder/
 | `APP_DEPENDS_ON_POSTGRES` | `false` | app depends_on postgres |
 | `PROD_COMMAND` | `python main.py` | prod 服务命令 |
 | `BUILD_DEV_IMAGE` | `true` | 是否构建 dev 镜像 |
-| `DEV_IMAGE_ONLY` | `false` | 仅构建 dev 镜像：不再区分 prod/dev，部署也用 dev 镜像，Bundle 只含该镜像（优先于 `BUILD_DEV_IMAGE`） |
-| `IMAGE_PREFIX` | `devcontainer` | 镜像名前缀 |
+| `DEV_IMAGE_ONLY` | `false` | 仅构建 dev 镜像：不再区分 prod/dev，部署也用 dev 镜像，镜像归档只含该镜像（优先于 `BUILD_DEV_IMAGE`） |
+| `IMAGE_PREFIX` | `devcontainer` | 镜像名前缀（生成 `<prefix>:prod-<tag>` / `<prefix>:dev-<tag>`） |
+| `IMAGE_TAG` | `latest` | 镜像 TAG 后缀：`latest`（默认）或 `timestamp`（构建时间戳，UTC+8） |
 | `APP_SOURCE_DIR` | `.` | 挂载为 /app 的源码目录（不支持 `~`） |
 | `APP_PORT` | 空 | 应用容器内监听端口；启用 nginx 时自动生成反代配置 |
 | `ENV_FILE` | 空 | 注入 app 服务的 env 文件，逗号/空格分隔 |
@@ -89,15 +90,17 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
 - **install.sh + compose 模板（.tpl）**：src 包内的 compose 文件名为
   `docker-compose.yml.tpl`（不会被 docker compose 自动发现 / 被 `-f` 误用，
   与用户自己的 compose 配置隔离——compose 对 ports 等列表合并只做并集）。
-  `install.sh <应用根目录>` 解压 src 到 `<根>/docs/devcontainer/`，把
-  `{{SRC_ROOT}}` 渲染为根目录绝对路径（挂载为 /app）、生成 compose 项目名，
-  并在缺少 main.py 时放置占位入口（保证 `make up` 开箱即用）。
+  `install.sh <应用根目录>` 解压 src 到 `<根>/docs/devcontainer/`，把模板
+  **原样复制**到应用根目录为 `docker-compose.yml`（仅去掉 `.tpl` 后缀，不做
+  渲染），并在缺少 main.py 时放置占位入口（保证 `make up` 开箱即用）。
+  模板内 `${SRC_ROOT:-./}`（默认 `./` = 项目根目录，挂载为 /app）与
+  `${SRC_ROOT_NAME:-app}`（compose 项目名后缀）由 docker compose 运行时解析。
 - **离线补装（build.sh + Dockerfile.addon）**：src 包附带 addon 机制——把
   wheel 放到 `<应用根目录>/wheels/`，`bash build.sh` 基于现有镜像逐个
-  `docker build --target` 生成 `<镜像名>:addon-<原TAG>` 新镜像。wheel 复制到
-  镜像 `/tmp/addon-wheels` 后在同一 RUN 层内安装并删除（不增大镜像）；构建
-  上下文为临时目录（只含 wheels），构建后自动清理。回滚 = 重新 docker load
-  原 bundle。
+  `docker build --target` 生成 `<前缀>:<stage>-addon-<时间戳>` 新镜像。wheel
+  复制到镜像 `/tmp/addon-wheels` 后在同一 RUN 层内安装并删除（不增大镜像）；
+  构建上下文为临时目录（只含 wheels），构建后自动清理。回滚 = 重新 docker load
+  原 `devcontainer-docker-images_<时间戳>.tgz`。
 - **多阶段 Dockerfile**：`prod`（运行时）与 `dev`（`FROM prod` + ruff/pytest
   等工具）在同文件内分阶段构建，compose 通过 `target` 区分；dev 服务挂
   `profiles: [dev]`，仅 `make shell/lint/test` 激活，不影响 `make up`。
@@ -106,9 +109,9 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   ruff/pytest/compileall 缓存（`.ruff_cache`/`.pytest_cache`/`__pycache__`）
   以 root 属主污染挂载目录。
 - **仅 dev 镜像模式**（`dev_image_only=true`）：Dockerfile 渲染为单阶段 dev
-  镜像，compose 的 app 服务直接使用该 dev 镜像并显式指定 `command`，Bundle
-  只包含这一个镜像（不再生成 prod 镜像文件）。app/dev 两个服务保留：prod+dev
-  模式两服务镜像本就不同，统一模板可避免生成器分支；dev 服务无
+  镜像，compose 的 app 服务直接使用该 dev 镜像并显式指定 `command`，镜像
+  归档只包含这一个镜像（不再生成 prod 镜像文件）。app/dev 两个服务保留：
+  prod+dev 模式两服务镜像本就不同，统一模板可避免生成器分支；dev 服务无
   restart/ports/depends_on，工具型 `compose run` 不会误拉起外挂服务。
 - **CMD 而非 ENTRYPOINT**：prod/dev 镜像默认命令均通过 `CMD` 承载，
   `docker compose up` 时由 compose `command` 覆盖执行 `python main.py`，
@@ -116,8 +119,14 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
 - **compose run 与 profile**：命令行显式指定的服务会自动激活其 profiles
   （compose v2 行为），因此 `DEV_RUN` 无需 `--profile dev`；但
   `make build`（`compose build`）需要 `--profile dev` 才会构建 dev 服务。
-- **镜像 TAG**：`<yyyymmdd-HHMMSS>`（UTC），与产物文件名的时间戳一致，
-  保证 compose 引用与 `docker save` 的镜像名一一对应。
+- **镜像命名与 TAG**：`<前缀>:<stage>-<TAG 后缀>`（如
+  `devcontainer:prod-latest` / `devcontainer:dev-20260101-120000`）；TAG 后缀
+  由 `IMAGE_TAG` 选择 `latest`（默认）或构建时间戳（UTC+8）。产物文件名
+  （bundle zip / 镜像归档 tgz / src tgz）统一使用 UTC+8 时间戳。
+- **唯一 Artifact**：`devcontainer-bundle_<时间戳>` 一个 zip 内含
+  `devcontainer-docker-images_<时间戳>.tgz`（docker save 直出 gzip，docker
+  load 用）、`devcontainer-src_<时间戳>.tgz` 与 `install.sh` 三个文件；
+  "Bundle" 专指该外部 zip，镜像归档文件名用 "Docker Images"。
 - **glibc 语义**：基础镜像固定 slim-bookworm（glibc 2.36），glibc 参数仅决定
   pip download 请求的 manylinux 标签集合（目标 glibc 及以下全部标签）。
 - **YAML 安全**：compose 中的 `command` 与 `volumes` 挂载路径使用

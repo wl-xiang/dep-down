@@ -88,10 +88,18 @@ on:
         required: true
         default: false
       image_prefix:
-        description: 'Image name prefix (produces <prefix>-prod:<tag> and <prefix>-dev:<tag>)'
+        description: 'Image name prefix (produces <prefix>:prod-<tag> and <prefix>:dev-<tag>)'
         type: string
         required: true
         default: 'devcontainer'
+      image_tag:
+        description: 'Image tag suffix: latest (overwrites on each build) or build timestamp (UTC+8)'
+        type: choice
+        required: true
+        default: 'latest'
+        options:
+          - 'latest'
+          - 'timestamp'
       app_source_dir:
         description: 'Subdirectory of the project root mounted into the container as /app (default "." = whole root; the project root is passed to install.sh at install time)'
         type: string
@@ -164,6 +172,7 @@ jobs:
           BUILD_DEV_IMAGE: ${{ inputs.build_dev_image }}
           DEV_IMAGE_ONLY: ${{ inputs.dev_image_only }}
           IMAGE_PREFIX: ${{ inputs.image_prefix }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
           APP_SOURCE_DIR: ${{ inputs.app_source_dir }}
           APP_PORT: ${{ inputs.app_port }}
           ENV_FILE: ${{ inputs.env_file }}
@@ -178,9 +187,14 @@ jobs:
           tar tzf "${{ steps.build.outputs.src_tgz }}" > /tmp/src_tgz.list
           head -30 /tmp/src_tgz.list
           echo "... $(wc -l < /tmp/src_tgz.list) entries total"
-          # install.sh 依赖的关键文件必须存在
+          # src 包内必须只有 compose 模板（不带渲染后的 docker-compose.yaml），
+          # 由 install.sh 复制到项目根目录为 docker-compose.yml
           grep -q 'devcontainer-src/docker-compose.yml.tpl$' /tmp/src_tgz.list \
             || { echo "::error::src 包缺少 docker-compose.yml.tpl"; exit 1; }
+          if grep -q 'devcontainer-src/docker-compose\.yaml$' /tmp/src_tgz.list; then
+            echo "::error::src 包不应包含渲染后的 docker-compose.yaml（只保留 docker-compose.yml.tpl）"
+            exit 1
+          fi
           grep -q 'devcontainer-src/main.py$' /tmp/src_tgz.list \
             || { echo "::error::src 包缺少占位 main.py"; exit 1; }
           # 离线补装机制（build.sh + Dockerfile.addon）
@@ -207,19 +221,15 @@ jobs:
           tar tvzf "${{ steps.build.outputs.src_tgz }}" devcontainer-src/build.sh \
             | grep -q '^-[rwx-]*x' \
             || { echo "::error::src 包内 build.sh 无可执行权限"; exit 1; }
-          if [ -n "${{ steps.build.outputs.bundle_tgz }}" ]; then
-            echo "--- ${{ steps.build.outputs.bundle_name }} ---"
-            # bundle 是 gzip 压缩的镜像归档：根目录必须能直接看到 manifest.json（或 OCI index.json）
-            tar tzf "${{ steps.build.outputs.bundle_tgz }}" > /tmp/bundle.list
-            head -20 /tmp/bundle.list
-            if ! grep -qE '^(\./)?(manifest\.json|index\.json)$' /tmp/bundle.list; then
-              echo "::error::bundle 顶层缺少 manifest.json / index.json，docker load 会失败"
-              exit 1
-            fi
-            sha256sum "${{ steps.build.outputs.bundle_tgz }}"
-          else
-            echo "bundle artifact skipped (DEVCONTAINER_SKIP_DOCKER was set)"
+          echo "--- ${{ steps.build.outputs.images_name }} (docker load 用镜像归档) ---"
+          # 镜像归档是 gzip 压缩的镜像归档：根目录必须能直接看到 manifest.json（或 OCI index.json）
+          tar tzf "${{ steps.build.outputs.images_tgz }}" > /tmp/images.list
+          head -20 /tmp/images.list
+          if ! grep -qE '^(\./)?(manifest\.json|index\.json)$' /tmp/images.list; then
+            echo "::error::镜像归档顶层缺少 manifest.json / index.json，docker load 会失败"
+            exit 1
           fi
+          sha256sum "${{ steps.build.outputs.images_tgz }}"
 
       # 安装脚本：构建时已 chmod 755，此处显式再确认一次
       # （注：artifact zip 解压后可能丢失 +x，文档统一引导用户 bash install.sh 调用）
@@ -227,23 +237,15 @@ jobs:
         run: chmod +x "${{ steps.build.outputs.install_sh }}"
 
       # Artifacts 只能是 zip 封装：设 compression-level 0 让 zip 只做存储，
-      # 避免 tgz 再被 zip 二次压缩。src artifact 同时包含 src tgz 与 install.sh
-      # 两个文件（均在 dist/ 下，zip 解压后即得这两个文件），加上 bundle 共两个产物
-      - name: Upload src artifact (src tgz + install.sh)
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.build.outputs.src_name }}
-          path: |
-            ${{ steps.build.outputs.src_tgz }}
-            ${{ steps.build.outputs.install_sh }}
-          compression-level: 0
-          if-no-files-found: error
-
-      - name: Upload bundle artifact
-        if: ${{ steps.build.outputs.bundle_tgz != '' }}
+      # 避免 tgz 再被 zip 二次压缩。唯一产物 devcontainer-bundle_<时间戳>，
+      # zip 内含镜像归档 tgz、src tgz 与 install.sh 三个文件
+      - name: Upload bundle artifact (docker images tgz + src tgz + install.sh)
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.build.outputs.bundle_name }}
-          path: ${{ steps.build.outputs.bundle_tgz }}
+          path: |
+            ${{ steps.build.outputs.images_tgz }}
+            ${{ steps.build.outputs.src_tgz }}
+            ${{ steps.build.outputs.install_sh }}
           compression-level: 0
           if-no-files-found: error

@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 # 由 scripts/devcontainer-builder 生成，请勿手工编辑。
-# 镜像 TAG: {{TAG}}
+# 镜像 TAG: {{TAG}}（时间戳: {{TS}}）
 #
 # 用途：离线补装 Python 包——把 wheel 打进现有镜像，生成 addon 镜像。
-# 用法: bash build.sh [新TAG]     # 新TAG 默认 addon-{{TAG}}
+# 用法: bash build.sh [新TAG后缀]     # 后缀默认 addon-{{TS}}，
+#                                     # 新镜像 = <前缀>:<stage>-<后缀>（如 <前缀>:dev-addon-{{TS}}）
 #
 # 步骤：
 #   1. 在联网机器上下载缺的包为 wheel（推荐用本仓库 scripts/pip/pip_download.py，
 #      会同时生成带 --no-index 头的 requirements.txt），拷回内网机器
 #      <应用根目录>/wheels/ 下；
 #   2. 在本目录（docs/devcontainer）执行 bash build.sh；
-#   3. 按输出的 sed 命令把 docker-compose.yaml 切换到新镜像，make up 生效。
-#      回滚：重新 docker load 原 bundle 即可恢复原镜像 TAG。
+#   3. 按输出的 sed 命令把项目根目录的 docker-compose.yml 切换到新镜像，make up 生效。
+#      回滚：重新 docker load 原 devcontainer-docker-images_{{TS}}.tgz 即可恢复原镜像。
 # （Artifact 的 zip 解压后可能丢失可执行权限，统一用 `bash build.sh` 调用）
 set -euo pipefail
 
@@ -26,7 +27,7 @@ if ! ls "$WHEELS_DIR"/*.whl >/dev/null 2>&1; then
     exit 1
 fi
 
-NEW_TAG=${1:-addon-{{TAG}}}
+NEW_SUFFIX=${1:-addon-{{TS}}}
 
 # 构建上下文使用临时目录（只含 wheels），避免把整个应用目录发给 docker daemon
 STAGING="$SCRIPT_DIR/.addon-build"
@@ -38,16 +39,16 @@ if [ -f "$WHEELS_DIR/requirements.txt" ]; then
 fi
 trap 'rm -rf "$STAGING"' EXIT
 
-build() {  # $1=Dockerfile target, $2=原镜像
-    local new="${2%:*}:$NEW_TAG"
+build() {  # $1=Dockerfile target, $2=原镜像, $3=新镜像 TAG 后缀
+    local new="${2%:*}:$3"
     echo "== build $1 -> $new =="
     docker build -f "$SCRIPT_DIR/Dockerfile.addon" --target "$1" -t "$new" "$STAGING"
     echo "  新镜像:   $new"
-    echo "  切换使用: sed -i 's|$2|$new|g' \"$SCRIPT_DIR/docker-compose.yaml\""
+    echo "  切换使用: sed -i 's|$2|$new|g' \"$SRC_ROOT/docker-compose.yml\""
 }
 
 {{BUILD_CALLS}}
 
 echo ""
-echo "完成。执行上面输出的 sed 命令切换 docker-compose.yaml 后，make up 即使用新镜像。"
-echo "（回滚：重新 docker load 原始 devcontainer-bundle_{{TAG}}.tgz）"
+echo "完成。执行上面输出的 sed 命令切换项目根目录的 docker-compose.yml 后，make up 即使用新镜像。"
+echo "（回滚：重新 docker load 原始 devcontainer-docker-images_{{TS}}.tgz）"

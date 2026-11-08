@@ -13,11 +13,12 @@ Python 环境**。
 参数解析与校验
 模板渲染 (Dockerfile/compose.tpl/Makefile)
 pip download → wheels/
-docker build (prod → dev / 仅 dev)         docker load bundle tgz
+docker build (prod → dev / 仅 dev)         docker load 镜像归档 tgz
 docker pull (nginx/postgres, 按需)         bash install.sh <应用根目录>
-打包 src tgz + bundle tgz + install.sh     → <应用根>/docs/devcontainer/
-────────── 传输（2 个 Artifacts）────────→  cd <应用根>/docs/devcontainer
-上传 Artifacts + 写 Summary                make check / shell / lint / compile / test
+打包镜像归档 tgz + src tgz + install.sh    → <应用根>/docker-compose.yml
+────────── 传输（1 个 Artifact zip）─────→   + <应用根>/docs/devcontainer/
+上传唯一 Artifact + 写 Summary             cd <应用根>/docs/devcontainer
+                                           make check / shell / lint / compile / test
                                            make up (python main.py)
 ```
 
@@ -34,13 +35,16 @@ docker pull (nginx/postgres, 按需)         bash install.sh <应用根目录>
 
 1. 进入 Fork 后的仓库，点击 **Actions** → 左侧选择 **Build DevContainer** →
    **Run workflow**。
-2. 填写参数后运行。运行完成后在 **Summary** 底部 **Artifacts** 下载两个产物：
-   - `devcontainer-src_<时间戳>.tgz`：运行时源码包 + 安装脚本（Artifact 解压得到
-     `install.sh` 与 `devcontainer-src_<时间戳>.tgz` 两个文件，把两者放到同一目录）
-   - `devcontainer-bundle_<时间戳>.tgz`：镜像 Bundle 包
+2. 填写参数后运行。运行完成后在 **Summary** 底部 **Artifacts** 下载唯一产物
+   `devcontainer-bundle_<时间戳>.zip`（时间戳为 UTC+8），zip 解压得到三个文件：
+   - `devcontainer-docker-images_<时间戳>.tgz`：Docker Images 镜像归档
+     （gzip 压缩的 `docker save` 输出，可直接 `docker load`）
+   - `devcontainer-src_<时间戳>.tgz`：运行时源码包
+   - `install.sh`：安装脚本（与 src tgz 放同一目录使用）
 
    > Artifacts 只能是 zip 封装，工作流已设置 `compression-level: 0`（仅存储、
-   > 不再二次压缩），解压 zip 即得到产物文件。
+   > 不再二次压缩），解压 zip 即得到产物文件。"Bundle" 专指这个外部 zip 产物；
+   > 内部用于 `docker load` 的 tgz 文件名为 "Docker Images"。
 3. Summary 页同时给出本次构建的完整摘要与内网使用步骤。
 
 ### 触发参数（Inputs）
@@ -60,8 +64,9 @@ docker pull (nginx/postgres, 按需)         bash install.sh <应用根目录>
 | `app_depends_on_postgres` | boolean | — | `false` | app 服务 `depends_on` postgres（需先启用 postgres） |
 | `prod_command` | string | 命令行 | `python main.py` | prod 服务启动命令 |
 | `build_dev_image` | boolean | — | `true` | 是否同时构建 dev 镜像（ruff/pytest 等，继承 prod） |
-| `dev_image_only` | boolean | — | `false` | 仅构建 dev 镜像：不再区分 prod/dev 两个镜像，部署（`make up`）也使用 dev 镜像，Bundle 只包含该 dev 镜像（优先于 `build_dev_image`） |
-| `image_prefix` | string | 小写字母/数字/`._-` | `devcontainer` | 镜像名前缀（生成 `<prefix>-prod:<tag>` / `<prefix>-dev:<tag>`；仅 dev 镜像模式只有 `<prefix>-dev:<tag>`） |
+| `dev_image_only` | boolean | — | `false` | 仅构建 dev 镜像：不再区分 prod/dev 两个镜像，部署（`make up`）也使用 dev 镜像，镜像归档只包含该 dev 镜像（优先于 `build_dev_image`） |
+| `image_prefix` | string | 小写字母/数字/`._-` | `devcontainer` | 镜像名前缀（生成 `<prefix>:prod-<tag>` / `<prefix>:dev-<tag>`；仅 dev 镜像模式只有 `<prefix>:dev-<tag>`） |
+| `image_tag` | choice | `latest` / `timestamp` | `latest` | 镜像 TAG 后缀：`latest`（每次构建覆盖同名镜像）或 `timestamp`（构建时间戳，UTC+8，如 `dev-20260101-120000`） |
 | `app_source_dir` | string | 相对/绝对路径 | `.` | 挂载进容器 `/app` 的目录：`.` = 整个项目根目录；相对路径 = 项目根目录下的子目录（如 monorepo 中的应用子目录，可避免 ruff/pytest 扫到无关源码）；也支持绝对路径。项目根目录由 `install.sh` 安装时传入（不支持 `~`） |
 | `app_port` | string | 端口号 | 空 | 应用在容器内监听的端口。设置后：无 nginx 时映射宿主机同端口；启用 nginx 时由 nginx 反代，app 仅容器网络暴露 |
 | `env_file` | string | 逗号/空格分隔 | 空 | 注入 app 服务的 env 文件（相对应用根目录，如 `.env`；也支持绝对路径） |
@@ -76,13 +81,29 @@ docker pull (nginx/postgres, 按需)         bash install.sh <应用根目录>
 
 - `app_depends_on_nginx=true` 但 `enable_nginx=false`
 - `app_depends_on_postgres=true` 但 `enable_postgres=false`
-- `platform` / `python_version` / `glibc_version` / `pip_mirror` 不在取值范围内
+- `platform` / `python_version` / `glibc_version` / `pip_mirror` / `image_tag` 不在取值范围内
 - `image_prefix` 含非法字符（仅允许小写字母/数字/`.`/`_`/`-`）
 - `prod_command` 无法解析为命令
 - `app_port` 不是 1-65535 的整数
 - `app_source_dir` / `env_file` 使用 `~`（不会展开，请写绝对路径或相对路径）
 
 ## 产物说明
+
+唯一 Artifact 为 `devcontainer-bundle_<yyyymmdd-HHMMSS>.zip`（时间戳 UTC+8），
+zip 内含以下三个文件（`compression-level: 0`，仅存储不再二次压缩）：
+
+| 文件 | 用途 |
+|------|------|
+| `devcontainer-docker-images_<时间戳>.tgz` | Docker Images 镜像归档（`docker load` 用） |
+| `devcontainer-src_<时间戳>.tgz` | 运行时源码包 |
+| `install.sh` | 安装脚本（与 src tgz 放同一目录） |
+
+### devcontainer-docker-images_<yyyymmdd-HHMMSS>.tgz
+
+该文件是 `docker save` 输出经 gzip 压缩得到的镜像归档（prod、dev、nginx、postgres，
+按本次参数），可直接 `docker load -i` 导入，无需再解一层 tar。勾选 `dev_image_only`
+时归档中只有一个 dev 镜像（外加按需启用的 nginx/postgres）。Summary 中同时给出
+SHA256，便于校验传输完整性。
 
 ### devcontainer-src_<yyyymmdd-HHMMSS>.tgz
 
@@ -92,7 +113,7 @@ docker pull (nginx/postgres, 按需)         bash install.sh <应用根目录>
 ```
 devcontainer-src/
 ├── Dockerfile                   # 多阶段 prod/dev；仅 dev 镜像模式下为单阶段 dev
-├── docker-compose.yml.tpl       # compose 模板（install.sh 渲染为 docker-compose.yaml）
+├── docker-compose.yml.tpl       # compose 模板（install.sh 原样复制到项目根为 docker-compose.yml）
 ├── Makefile                     # check/up/down/shell/lint/compile/test 等
 ├── main.py                      # 占位入口（应用根目录无 main.py 时由 install.sh 复制）
 ├── requirements.txt             # pip 包清单
@@ -102,13 +123,17 @@ devcontainer-src/
 └── README.md                    # 快速上手说明
 ```
 
+src 包内**只有 `docker-compose.yml.tpl` 模板，不包含渲染后的
+`docker-compose.yaml`**；模板中的 `${SRC_ROOT:-./}` 与 `${SRC_ROOT_NAME:-app}`
+两个环境变量由 docker compose 在运行时以 `:-` 默认值语法解析（默认
+`./` = 项目根目录、项目名后缀 `app`）。
+
 `wheels/` 不再随源码包分发：所有 wheel 已在镜像构建阶段安装，并固化在镜像
 `/wheels` 内，内网可直接在容器中离线安装（见「prod / dev 镜像」）。
 
 ### install.sh
 
-安装脚本（与 src tgz 同在 src Artifact 的 zip 内，解压后把两者放到同一目录）。
-执行：
+安装脚本（与两个 tgz 同在 bundle zip 内）。执行：
 
 ```bash
 bash install.sh ~/apps/myapp1        # 参数 = 你的项目根目录
@@ -118,33 +143,27 @@ bash install.sh ~/apps/myapp1        # 参数 = 你的项目根目录
 
 1. 在 `<项目根>/docs/devcontainer/` 下解压 src 包（目录已存在则报错，
    避免新旧版本混装；重新安装请先删除该目录）；
-2. 渲染 `docker-compose.yml.tpl` → `docker-compose.yaml`：`{{SRC_ROOT}}`
-   占位符替换为项目根目录**绝对路径**（挂载为容器 `/app`），并按项目目录名
-   生成 compose 项目名（如 `devcontainer-myapp1`）；
+2. 把包内 `docker-compose.yml.tpl` **原样复制**到项目根目录，命名为去掉
+   `.tpl` 后缀的 `docker-compose.yml`（不做任何渲染；目标文件已存在则报错，
+   避免覆盖你自己的 compose 配置）；
 3. 项目根目录没有 `main.py` 且启动命令为默认的 `python main.py` 时，复制
-   占位 `main.py`（不覆盖已有文件）。
+   占位 `main.py` 到项目根目录（不覆盖已有文件）。
 
 > 为什么 compose 文件带 `.tpl` 后缀：避免被 docker compose 自动发现或被
 > `-f` 误用，与项目根目录下用户自己的 compose 配置彻底隔离——compose 多
 > 文件合并对 `ports` 等列表只做并集、无法通过 override 移除，`*.override.yaml`
-> 自动合并也会产生同样问题。渲染出的 `docker-compose.yaml` 位于
-> `docs/devcontainer/`，可放心手工修改。
-
-### devcontainer-bundle_<yyyymmdd-HHMMSS>.tgz
-
-该文件是 `docker save` 输出经 gzip 压缩得到的镜像归档（prod、dev、nginx、postgres，
-按本次参数），可直接 `docker load -i` 导入，无需再解一层 tar。勾选 `dev_image_only`
-时归档中只有一个 dev 镜像（外加按需启用的 nginx/postgres）。文件名时间戳与镜像
-TAG 一致；Summary 中同时给出 SHA256，便于校验传输完整性。
+> 自动合并也会产生同样问题。复制到项目根目录的 `docker-compose.yml` 是
+> compose 实际使用的运行文件，可放心手工修改；`${SRC_ROOT:-./}` /
+> `${SRC_ROOT_NAME:-app}` 也可在运行 `docker compose` 时用环境变量覆盖。
 
 ## 内网使用步骤
 
 ```bash
-# 1. 下载两个 Artifacts（各自解压 zip），install.sh 与 src tgz（src Artifact
-#    解压得这两个文件）与 bundle tgz 放到同一目录：
+# 1. 下载唯一 Artifact devcontainer-bundle_<时间戳>.zip 并解压，
+#    三个文件（镜像归档 tgz、src tgz、install.sh）放到同一目录：
 
 # 2. 导入镜像
-docker load -i devcontainer-bundle_20260101-120000.tgz
+docker load -i devcontainer-docker-images_20260101-120000.tgz
 
 # 3. 安装到应用根目录（参数 = 你的项目根目录）
 bash install.sh ~/apps/myapp1
@@ -178,10 +197,10 @@ python scripts/pip/pip_download.py <包名...> -d /tmp/wheels
 #    把 /tmp/wheels 整个目录拷回内网 <应用根目录>/wheels/
 
 # 2. 内网机器，在 <应用根目录>/docs/devcontainer 下执行：
-bash build.sh [新TAG]        # 新TAG 默认 addon-<原TAG>
+bash build.sh [新TAG后缀]     # 后缀默认 addon-<时间戳>，新镜像 = <前缀>:<stage>-<后缀>
 
-# 3. 按输出的 sed 命令把 docker-compose.yaml 切换到新镜像（如
-#    devcontainer-dev:addon-20260101-120000），然后：
+# 3. 按输出的 sed 命令把项目根目录的 docker-compose.yml 切换到新镜像（如
+#    devcontainer:dev-addon-20260101-120000），然后：
 make up && make logs
 ```
 
@@ -189,7 +208,8 @@ make up && make logs
 
 - `Dockerfile.addon` 按构建模式对每个应用镜像生成一个阶段（prod+dev 模式
   分别基于 prod / dev 镜像；仅 dev 镜像模式只有 dev），`build.sh` 逐个
-  `docker build --target` 生成 `<镜像名>:addon-<原TAG>`。
+  `docker build --target` 生成 `<前缀>:<stage>-addon-<时间戳>`
+  （如 `devcontainer:dev-addon-20260101-120000`，可传参自定义后缀）。
 - wheel 通过临时构建上下文复制到镜像内 `/tmp/addon-wheels`，`pip install
   --no-index --find-links` 安装后**同一 RUN 层内删除**——不会增大最终镜像
   体积；已在基础镜像中安装的依赖 pip 自动跳过。
@@ -197,8 +217,8 @@ make up && make logs
   联网），否则安装目录下全部 `*.whl`。
 - 构建上下文是临时目录（只含 wheels），不会把整个应用目录发给 docker
   daemon；构建结束自动清理。
-- 回滚：重新 `docker load -i devcontainer-bundle_<原TAG>.tgz` 即可恢复
-  原镜像 TAG。
+- 回滚：重新 `docker load -i devcontainer-docker-images_<时间戳>.tgz` 即可
+  恢复原镜像。
 
 ## Makefile 目标
 
@@ -207,7 +227,7 @@ make up && make logs
 | 目标 | 说明 |
 |------|------|
 | `make help` | 列出所有目标（目标说明须写在 `## ` 双井号之后才会显示） |
-| `make check` | **离线自检**：打印 docker 架构，逐个确认本次镜像已导入（缺失时提示 `docker load`） |
+| `make check` | **离线自检**：打印 docker 架构，确认 compose 文件存在、逐个确认本次镜像已导入（缺失时提示 `docker load`） |
 | `make build` | `docker compose build`（**需联网**：发布包不含 wheels/，deps 从 apt/pip 源安装；离线机器勿用） |
 | `make up` | `docker compose up -d --no-build`，后台启动 prod 服务（及已启用的外挂服务） |
 | `make down` | 停止并移除容器与网络 |
@@ -252,13 +272,17 @@ make up && make logs
   自动合并也会产生同样的问题——隔离后，devcontainer 的 compose 与应用根目录
   下用户自己的 compose 配置互不影响。
 - `install.sh <项目根目录>` 把 src 包解压到 `<项目根>/docs/devcontainer/`，
-  并渲染模板：`{{SRC_ROOT}}` → 项目根目录绝对路径（挂载为容器 `/app`，
-  避免「相对路径以第一个 -f 文件所在目录为基准」的歧义），项目名固定为
-  `<image_prefix>-<项目目录名>`（避免默认取目录名导致多应用冲突）。
-- 渲染出的 `docker-compose.yaml` 是用户可改的副本，`.tpl` 保持原样。
+  并把模板**原样复制**到项目根目录为 `docker-compose.yml`（仅去掉 `.tpl`
+  后缀，不做渲染）。模板中的两个环境变量以 compose 的 `:-` 默认值语法书写、
+  运行时解析：`${SRC_ROOT:-./}` 应用根目录（默认 `./` = docker-compose.yml
+  所在的项目根目录，挂载为容器 `/app`）、`${SRC_ROOT_NAME:-app}` compose
+  项目名后缀（项目名 = `<image_prefix>-<SRC_ROOT_NAME>`，避免多应用冲突）。
+  需要时可在运行 compose 前设置环境变量覆盖（如 `SRC_ROOT=/data/other`）。
+- 项目根目录的 `docker-compose.yml` 是用户可改的副本，`.tpl` 保持原样；
+  `docker-compose.yml` 已存在时 install.sh 报错退出，不会覆盖。
 - 应用根目录没有 `main.py` 且启动命令为默认值时，install.sh 复制占位
-  `main.py`，保证 `make up` 开箱即用（否则 `python main.py` 立即退出，配合
-  `restart: unless-stopped` 会无限重启）。
+  `main.py` 到项目根目录，保证 `make up` 开箱即用（否则 `python main.py`
+  立即退出，配合 `restart: unless-stopped` 会无限重启）。
 
 ### 容器用户（root 污染防护）
 
@@ -288,13 +312,17 @@ make up && make logs
 - 单个 `Dockerfile` 多阶段构建：`prod` 只含运行时；`dev` 阶段 `FROM prod`
   追加 git/curl/vim/make 与 ruff/pytest/pytest-cov（wheel 在构建阶段随
   `wheels/` 离线安装）。
+- 镜像命名 `<前缀>:<stage>-<TAG 后缀>`：如 `devcontainer:prod-latest` /
+  `devcontainer:dev-latest`（`image_tag=latest`，默认，每次构建覆盖）或
+  `devcontainer:prod-20260101-120000` / `devcontainer:dev-20260101-120000`
+  （`image_tag=timestamp`）。
 - 镜像使用 `CMD`（而非 `ENTRYPOINT`）承载默认命令：`make up` 时 compose 的
   `command` 直接覆盖 CMD 执行 `python main.py`；`make shell` 通过 dev 镜像的
   `CMD ["bash"]` 进入交互终端，两者互不干扰。
 - 勾选 `dev_image_only` 时不再生成两个镜像：Dockerfile 只有单阶段 `dev`，
   compose 的 app 服务直接引用该 dev 镜像并显式写入 `command`（镜像 CMD 为
-  bash），`make up` 与 `make shell/lint/test` 共用同一个镜像；Bundle 中也只
-  保存这一个镜像。
+  bash），`make up` 与 `make shell/lint/test` 共用同一个镜像；镜像归档中也
+  只保存这一个镜像。
 - `wheels/` 在构建时被复制到镜像 `/wheels` 并保留下来（构建上下文中的
   `wheels/` 不会进入发布包），内网可在容器内继续离线安装：
   `pip install --no-index --find-links=/wheels <pkg>`。
@@ -313,37 +341,39 @@ make up && make logs
 ## FAQ
 
 **Q: 为什么内网 `make up` 报错找不到镜像 / 尝试联网构建？**
-先执行 `docker load -i devcontainer-bundle_<时间戳>.tgz` 导入镜像，再在
+先执行 `docker load -i devcontainer-docker-images_<时间戳>.tgz` 导入镜像，再在
 `docs/devcontainer` 目录执行 `make check` 确认所有镜像存在；`make up` 使用
 `--no-build`，compose 中也设置了 `pull_policy: never`，不会联网。若仍失败，
-说明镜像 TAG 与 compose 中不一致，请确认使用同一时间戳的 src 与 bundle。
+说明镜像 TAG 与 compose 中不一致，请确认使用同一次构建的镜像归档与 src。
 
 **Q: `docker load` 成功但容器起不来，日志报 `exec format error`？**
 构建平台与服务器 CPU 架构不一致（例如构建时选了 `linux-arm64`，服务器是 x86）。
 用 `uname -m` / `docker version` 确认后，按服务器架构重新构建。
 
 **Q: 传输后 `docker load` 报 `unexpected EOF` / 校验不符？**
-bundle 通常几百 MB 到 1 GB+，传输中断很常见。对比 Summary 中的 SHA256：
-`sha256sum devcontainer-bundle_<tag>.tgz`，不一致就重新传输。
+镜像归档通常几百 MB 到 1 GB+，传输中断很常见。对比 Summary 中的 SHA256：
+`sha256sum devcontainer-docker-images_<时间戳>.tgz`，不一致就重新传输。
 
 **Q: `docker load` 磁盘空间不足？**
 导入过程需要约 2 倍镜像体积的临时空间（`docker info` 查看 Docker Root Dir 所在分区）。
 
 **Q: 业务项目里会被放进哪些 devcontainer 文件？**
-只有 `docs/devcontainer/` 一个目录（以及应用根目录没有 `main.py` 时复制的
-占位 `main.py`）。其余业务文件一律不动，也不会与业务自带的
-`requirements.txt` / `README.md` 冲突（同名文件都在 `docs/devcontainer/` 内）。
+`docs/devcontainer/` 一个目录、项目根目录的 `docker-compose.yml`（install.sh
+从模板复制而来；已存在同名文件时安装报错退出，不会覆盖），以及应用根目录
+没有 `main.py` 时复制的占位 `main.py`。其余业务文件一律不动，也不会与业务
+自带的 `requirements.txt` / `README.md` 冲突（同名文件都在 `docs/devcontainer/` 内）。
 
 **Q: 如何重新安装 / 更新到新构建的版本？**
-删除旧的 `<应用根>/docs/devcontainer`（注意保留你手工修改过的
-`docker-compose.yaml` 等文件），再用新的 `install.sh` + src tgz 重新安装。
-`install.sh` 遇到已存在的目录会直接报错，避免新旧版本混装。
+删除旧的 `<应用根>/docs/devcontainer` 与 `<应用根>/docker-compose.yml`
+（注意保留你手工修改过的配置），再用新的 `install.sh` + src tgz 重新安装。
+`install.sh` 遇到已存在的安装目录或 compose 文件会直接报错，避免新旧版本
+混装或覆盖你的配置。
 
 **Q: `make up` 后容器一直重启（Restarting）？**
 `python: can't open file '/app/main.py'` 类错误说明启动命令指向的入口不存在：
 确认项目根目录（或 `app_source_dir` 指定的子目录）下有对应入口文件，或修改
-`docs/devcontainer/docker-compose.yaml` 中的 `command`。注意镜像 TAG 必须与
-src 同时间戳（先 `make check` 自检）。
+项目根目录 `docker-compose.yml` 中的 `command`。注意镜像 TAG 必须与本次导入
+的镜像归档一致（先 `make check` 自检）。
 
 **Q: 挂载目录里出现 root 属主文件 / 宿主机无法修改？**
 默认不会：Makefile 自动导出 `HOST_UID`/`HOST_GID`（当前用户），容器以你的
@@ -352,9 +382,9 @@ src 同时间戳（先 `make check` 自检）。
 属主。容器内需要 root 时：`make shell HOST_UID=0 HOST_GID=0`。
 
 **Q: SELinux Enforcing 主机上容器读不到 `/app`？**
-构建时把 `selinux_relabel` 设为 `true`（挂载追加 `:z`），或手动修改
-`docs/devcontainer/docker-compose.yaml` 中 app/dev 服务的 `volumes`，在挂载
-路径末尾追加 `:z`。
+构建时把 `selinux_relabel` 设为 `true`（挂载追加 `:z`），或手动修改项目根
+目录 `docker-compose.yml` 中 app/dev 服务的 `volumes`，在挂载路径末尾追加
+`:z`。
 
 **Q: 应用起来了但宿主机访问不到？**
 构建时设置 `app_port`（应用在容器内监听的端口），并确认应用监听 `0.0.0.0`
@@ -380,8 +410,8 @@ src 同时间戳（先 `make check` 自检）。
 第一版未内置私有源选项。可 Fork 后在 `scripts/devcontainer-builder/lib/params.py`
 的 `PIP_MIRRORS` 中增加条目（含认证 URL），或经镜像反代公开化。
 
-**Q: bundle 体积偏大？**
-bundle 含 prod+dev（或仅 dev）+外挂服务镜像，几百 MB 到 1GB+ 属正常。勾选
+**Q: 镜像归档体积偏大？**
+镜像归档含 prod+dev（或仅 dev）+外挂服务镜像，几百 MB 到 1GB+ 属正常。勾选
 `dev_image_only` 可少打一个 prod 镜像；后续可引入分层/增量导出方案优化；
 Summary 中记录了每次产物大小作为基线。
 
