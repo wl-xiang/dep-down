@@ -27,7 +27,7 @@ def build_markdown(p, results):
     src_tgz = results.get("src_tgz")
     images_tgz = results.get("images_tgz")
     install_sh = results.get("install_sh")
-    readme_txt = results.get("readme_txt")
+    readme_html = results.get("readme_html")
     skipped_docker = results.get("skipped_docker", False)
     bundle_name = f"devcontainer-bundle_{p.ts}"
 
@@ -129,9 +129,9 @@ def build_markdown(p, results):
             f"| {install_sh.name}（安装脚本） | {human_size(install_sh.stat().st_size)} "
             f"| `{sha256_of(install_sh)}` |"
         )
-    if readme_txt:
+    if readme_html:
         out.append(
-            f"| {readme_txt.name}（安装说明） | {human_size(readme_txt.stat().st_size)} | (纯文本) |"
+            f"| {readme_html.name}（安装说明） | {human_size(readme_html.stat().st_size)} | (HTML) |"
         )
     out.append("")
 
@@ -139,7 +139,7 @@ def build_markdown(p, results):
     out.append("")
     out.append("1. 从本次运行页面底部 **Artifacts** 下载唯一产物"
                f" **{bundle_name}**（zip 仅为封装、不压缩，解压得到"
-               " 镜像归档 tgz、src tgz、install.sh 与 readme.txt 四个文件），"
+               " 镜像归档 tgz、src tgz、install.sh 与 readme.html 四个文件），"
                "传输到与目标平台一致的内网机器，并用上表 SHA256 校验完整性。")
     out.append("")
     out.append("2. **把 artifact zip 包放到你的项目根目录 `dist/` 文件夹下**"
@@ -151,9 +151,8 @@ def build_markdown(p, results):
     out.append("mkdir -p /path/to/your-project/dist   # 项目根目录下的 dist/")
     out.append("# 把 devcontainer-bundle zip 移入 dist/ 后：")
     out.append(f"cd /path/to/your-project/dist && unzip {bundle_name}.zip")
-    out.append(f"docker load -i devcontainer-docker-images_{p.ts}.tgz"
-               "   # 导入镜像（gzip 压缩归档，可直接 load）")
-    out.append("bash install.sh ../                     # 参数 ../ 即项目根目录")
+    out.append("bash install.sh --load ../              # --load 安装开始前自动 docker load 镜像归档")
+    out.append("bash install.sh ../                     # 参数 ../ 即项目根目录（或改用上一行的 --load 一步到位）")
     out.append("```")
     out.append("")
     out.append("   install.sh 会把 `Makefile` / `build.sh` / `Dockerfile`"
@@ -249,9 +248,9 @@ def emit(p, results):
         if install_sh:
             entries.append(("install_sh", str(install_sh)))
             entries.append(("install_sha256", sha256_of(install_sh)))
-        readme_txt = results.get("readme_txt")
-        if readme_txt:
-            entries.append(("readme_txt", str(readme_txt)))
+        readme_html = results.get("readme_html")
+        if readme_html:
+            entries.append(("readme_html", str(readme_html)))
         entries.append(("images", ",".join(results.get("images") or [])))
         with open(output_path, "a", encoding="utf-8") as f:
             for key, value in entries:

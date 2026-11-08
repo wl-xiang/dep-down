@@ -388,9 +388,9 @@ def render_install_sh(p, out_file):
     return path
 
 
-def render_readme_txt(p, out_file):
-    """渲染 bundle 安装说明 readme.txt 到 dist/（随 install.sh 等一起进 Artifact zip）。"""
-    content = _sub(_load("readme.txt.tmpl"), _base_mapping(p))
+def render_readme_html(p, out_file):
+    """渲染 bundle 安装说明 readme.html 到 dist/（随 install.sh 等一起进 Artifact zip）。"""
+    content = _sub(_load("readme.html.tmpl"), _base_mapping(p))
     path = Path(out_file)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")

@@ -16,7 +16,7 @@ pip download → wheels/
 docker build (prod → dev / 仅 dev)         zip 放入项目根目录 dist/ 解压
 docker pull (nginx/postgres, 按需)         docker load 镜像归档 tgz
 打包镜像归档 tgz + src tgz + install.sh    bash install.sh ../ (dist/ 内执行)
-  + readme.txt → 1 个 Artifact zip         → 项目根: Makefile/Dockerfile/build.sh/
+  + readme.html → 1 个 Artifact zip       → 项目根: Makefile/Dockerfile/build.sh/
 ────────── 传输（1 个 Artifact zip）─────→   README-devcontainer.md/.dockerignore/
 上传唯一 Artifact + 写 Summary               .gitignore/docker-compose.yml
                                            → docs/devcontainer/ (原始副本, 重置用)
@@ -49,8 +49,9 @@ make up (python main.py)
      （gzip 压缩的 `docker save` 输出，可直接 `docker load`）
    - `devcontainer-src_<时间戳>.tgz`：运行时源码包
    - `install.sh`：安装脚本（与 src tgz 放同一目录使用）
-   - `readme.txt`：简易安装说明（把 zip 放到项目根目录 `dist/` 解压后
-     `bash install.sh ../`）
+   - `readme.html`：简易安装说明（把 zip 放到项目根目录 `dist/` 解压后
+     `bash install.sh ../`；加 `--load` 可在安装开始前自动 `docker load`
+     镜像归档）
 
    > Artifacts 只能是 zip 封装，工作流已设置 `compression-level: 0`（仅存储、
    > 不再二次压缩），解压 zip 即得到产物文件。"Bundle" 专指这个外部 zip 产物；
@@ -109,7 +110,7 @@ zip 内含以下四个文件（`compression-level: 0`，仅存储不再二次压
 | `devcontainer-docker-images_<时间戳>.tgz` | Docker Images 镜像归档（`docker load` 用） |
 | `devcontainer-src_<时间戳>.tgz` | 运行时源码包 |
 | `install.sh` | 安装脚本（与 src tgz 放同一目录） |
-| `readme.txt` | 简易安装说明（建议把 zip 放到项目根目录 `dist/` 下解压后 `bash install.sh ../`） |
+| `readme.html` | 简易安装说明（建议把 zip 放到项目根目录 `dist/` 下解压后 `bash install.sh ../`；`--load` 可自动导入镜像） |
 
 ### devcontainer-docker-images_<yyyymmdd-HHMMSS>.tgz
 
@@ -152,11 +153,13 @@ BuildKit bind mount 参与，不落入任何镜像层），运行容器内没有
 
 ### install.sh
 
-安装脚本（与两个 tgz、readme.txt 同在 bundle zip 内）。建议把 bundle zip 放到
+安装脚本（与两个 tgz、readme.html 同在 bundle zip 内）。建议把 bundle zip 放到
 项目根目录的 `dist/` 文件夹下解压后在 `dist/` 中执行：
 
 ```bash
-bash install.sh ../        # 参数 = 你的项目根目录（dist/ 的上级）
+bash install.sh ../              # 参数 = 你的项目根目录（dist/ 的上级）
+bash install.sh --load ../       # 加 --load：安装开始前自动 docker load
+                                 # 同目录的镜像归档 tgz（无需再手动 load）
 ```
 
 脚本会（先做全部前置检查、再写盘，任一检查失败都不会留下半套安装）：
@@ -193,23 +196,24 @@ bash install.sh ../        # 参数 = 你的项目根目录（dist/ 的上级）
 # 1. 下载唯一 Artifact devcontainer-bundle_<时间戳>.zip，
 #    放到你的项目根目录 dist/ 文件夹下（没有就新建），并在 dist/ 中解压：
 
-# 2. 导入镜像（在 dist/ 中执行）
-docker load -i devcontainer-docker-images_20260101-120000.tgz
+# 2. 导入镜像 + 安装到项目根目录（均在 dist/ 中执行，参数 ../ 即项目根目录）
+#    --load 会在安装开始前自动 docker load 同目录的镜像归档（一步到位）
+bash install.sh --load ../
+#    （等价的两步写法：
+#      docker load -i devcontainer-docker-images_20260101-120000.tgz
+#      bash install.sh ../）
 
-# 3. 安装到项目根目录（在 dist/ 中执行，参数 ../ 即项目根目录）
-bash install.sh ../
-
-# 4. 离线自检：镜像是否已导入、CPU 架构是否匹配（在项目根目录执行）
+# 3. 离线自检：镜像是否已导入、CPU 架构是否匹配（在项目根目录执行）
 cd ..
 make check
 
-# 5. 开发阶段（均在项目根目录执行）
+# 4. 开发阶段（均在项目根目录执行）
 make shell      # 进入 dev 容器交互式 bash（含 ruff/pytest 等）
 make lint       # ruff check .
 make compile    # python -m compileall -q .
 make test       # pytest -q
 
-# 6. 运行阶段（--no-build，不会联网构建/拉取）
+# 5. 运行阶段（--no-build，不会联网构建/拉取）
 make up
 make logs       # 跟随日志
 make down       # 停止
