@@ -1,0 +1,318 @@
+# =====================================================================
+# Clean Workflow Run History
+#
+# 手动触发，按规则清理本仓库的 workflow 运行历史（删除整条 run，含日志与 Artifact）。
+#
+# 两种清理依据（clean_by）：
+#   num  : 按创建时间倒序，保留最近 N 条记录，删除更早的「已完成」记录
+#   date : 删除「已完成」且完成时间（updated_at）超过 N 天的记录
+#
+# 安全策略：
+#   - 默认 dry_run=true（预演）：只打印将删除的记录，不真正删除
+#   - 永不删除 排队/进行中（queued / in_progress）的记录
+#   - 永不删除本 workflow 自身的运行记录（也不参与保留计数）
+#
+# 触发方式：workflow_dispatch（手动触发）
+#
+# 权限：需要 actions: write（删除 workflow run 必需）
+# =====================================================================
+
+name: Clean Workflow Run History
+
+on:
+  workflow_dispatch:
+    inputs:
+      clean_by:
+        description: '清理依据：num = 按保留条数；date = 按保留天数'
+        required: true
+        type: choice
+        default: num
+        options:
+          - num
+          - date
+      keep_count:
+        description: '保留最近 N 条运行记录（仅 clean_by=num 生效，须为正整数）'
+        required: false
+        default: '10'
+        type: string
+      keep_days:
+        description: '保留最近 N 天内「已完成」的运行记录，更早的删除（仅 clean_by=date 生效，须为正整数）'
+        required: false
+        default: '30'
+        type: string
+      dry_run:
+        description: '预演模式（默认开启）：只打印将删除的记录、不真正删除；确认无误后设为 false 再执行'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  clean-run-history:
+    name: Clean Workflow Run History
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # ---------------------------------------------------------------
+      # Step 1: 校验输入参数（任何一项不通过则立即终止）
+      # ---------------------------------------------------------------
+      - name: 校验输入参数
+        env:
+          CLEAN_BY: ${{ inputs.clean_by }}
+          KEEP_COUNT: ${{ inputs.keep_count }}
+          KEEP_DAYS: ${{ inputs.keep_days }}
+        run: |
+          set -euo pipefail
+          fail() {
+            echo "::error::$1"
+            exit 1
+          }
+
+          # -- 1. clean_by 取值校验 --
+          if [[ "$CLEAN_BY" != "num" && "$CLEAN_BY" != "date" ]]; then
+            fail "clean_by 取值非法（当前值：$CLEAN_BY），只允许 num 或 date"
+          fi
+
+          # -- 2. 保留参数格式校验（均为正整数）--
+          is_pos_int() { [[ "$1" =~ ^[0-9]+$ ]] && [[ "$1" -gt 0 ]]; }
+          if ! is_pos_int "${KEEP_COUNT// /}"; then
+            fail "keep_count 必须为正整数（当前值：$KEEP_COUNT）"
+          fi
+          if ! is_pos_int "${KEEP_DAYS// /}"; then
+            fail "keep_days 必须为正整数（当前值：$KEEP_DAYS）"
+          fi
+
+          echo "✅ 输入参数校验通过（clean_by=$CLEAN_BY，keep_count=$KEEP_COUNT，keep_days=$KEEP_DAYS）"
+
+      # ---------------------------------------------------------------
+      # Step 2: 拉取运行记录 → 筛选待删集合 → 删除（或预演）→ 落盘统计
+      #   通过 GitHub REST API（gh api）操作，无需 checkout 本仓库
+      #   统计与清单写入 $RUNNER_TEMP，供后续「输出运行摘要」步骤消费
+      # ---------------------------------------------------------------
+      - name: 清理运行历史
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          CLEAN_BY: ${{ inputs.clean_by }}
+          KEEP_COUNT: ${{ inputs.keep_count }}
+          KEEP_DAYS: ${{ inputs.keep_days }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+
+          STATS_FILE="$RUNNER_TEMP/cleanup-stats.env"
+          CAND_FILE="$RUNNER_TEMP/cleanup-candidates.tsv"
+          FAIL_FILE="$RUNNER_TEMP/cleanup-failed.txt"
+          RUNS_RAW="$RUNNER_TEMP/cleanup-runs.raw"
+          RUNS_FILE="$RUNNER_TEMP/cleanup-runs.tsv"
+          : > "$STATS_FILE"; : > "$CAND_FILE"; : > "$FAIL_FILE"; : > "$RUNS_RAW"; : > "$RUNS_FILE"
+
+          # -- 解析本 workflow 自身路径（用于排除自身记录）--
+          # github.workflow_ref 形如 owner/repo/.github/workflows/x.yml@refs/heads/main
+          SELF_PATH="${WORKFLOW_REF%@*}"
+          SELF_PATH="${SELF_PATH#*/}"
+          SELF_PATH="${SELF_PATH#*/}"
+          if [[ "$SELF_PATH" != .github/workflows/* ]]; then
+            # 兜底：workflow_ref 缺失时使用固定文件名
+            SELF_PATH=".github/workflows/cleanup-run-history.yml"
+          fi
+          echo "ℹ️ 本 workflow 路径：$SELF_PATH（其运行记录将被排除）"
+
+          # -- 拉取全部运行记录（分页），输出 TSV --
+          # 字段：id  path  name  status  created_at  updated_at
+          if ! gh api --paginate "repos/${REPO}/actions/runs?per_page=100" \
+              --jq '.workflow_runs[] | [.id, .path, .name, .status, .created_at, .updated_at] | @tsv' \
+              > "$RUNS_RAW" 2>"$RUNNER_TEMP/gh-err.txt"; then
+            echo "::error::获取运行记录失败：请确认 GITHUB_TOKEN 具备 actions: write 权限，或稍后重试（API 限流）"
+            cat "$RUNNER_TEMP/gh-err.txt" || true
+            exit 1
+          fi
+
+          # 按创建时间（第 5 列）倒序：保证「保留最近 N 条」语义正确
+          if [[ -s "$RUNS_RAW" ]]; then
+            sort -t $'\t' -k5,5 -r "$RUNS_RAW" > "$RUNS_FILE"
+          fi
+
+          # -- date 模式：计算截止时间 --
+          NOW_EPOCH=$(date -u +%s)
+          CUTOFF_EPOCH=$(( NOW_EPOCH - KEEP_DAYS * 86400 ))
+
+          TOTAL=0; INDEX=0; DEL_COUNT=0; SKIPPED=0; SELF_SKIPPED=0
+
+          while IFS=$'\t' read -r id path name status created updated; do
+            [[ -z "$id" ]] && continue
+
+            # 排除本 workflow 自身（不删除、也不参与保留计数）
+            if [[ "$path" == "$SELF_PATH" ]]; then
+              SELF_SKIPPED=$((SELF_SKIPPED + 1))
+              continue
+            fi
+
+            TOTAL=$((TOTAL + 1))
+            INDEX=$((INDEX + 1))
+
+            if [[ "$CLEAN_BY" == "num" ]]; then
+              # 保留窗口内（最近 keep_count 条）的跳过
+              if (( INDEX <= KEEP_COUNT )); then
+                continue
+              fi
+            else
+              # date 模式：完成时间未超过保留天数的跳过
+              upd_epoch=$(date -u -d "$updated" +%s 2>/dev/null || echo 0)
+              if (( upd_epoch >= CUTOFF_EPOCH )); then
+                continue
+              fi
+            fi
+
+            # 安全：永不删除 排队/进行中 的记录
+            if [[ "$status" != "completed" ]]; then
+              SKIPPED=$((SKIPPED + 1))
+              continue
+            fi
+
+            printf '%s\t%s\t%s\t%s\n' "$id" "$name" "$created" "$updated" >> "$CAND_FILE"
+            DEL_COUNT=$((DEL_COUNT + 1))
+          done < "$RUNS_FILE"
+
+          # -- 执行删除（或预演）--
+          FAILED=0
+          if (( DEL_COUNT > 0 )); then
+            if [[ "$DRY_RUN" == "true" ]]; then
+              echo "🔍 预演模式：以下 ${DEL_COUNT} 条运行记录将被删除（未真正删除）"
+            else
+              echo "🗑️ 开始删除 ${DEL_COUNT} 条运行记录"
+            fi
+            while IFS=$'\t' read -r id name created updated; do
+              [[ -z "$id" ]] && continue
+              if [[ "$DRY_RUN" == "true" ]]; then
+                echo "  [预演] run #$id  $name  （创建：$created，完成：$updated）"
+              elif gh api --method DELETE "repos/${REPO}/actions/runs/$id" >/dev/null 2>&1; then
+                echo "  ✅ 已删除 run #$id  $name"
+              else
+                echo "::warning::删除失败 run #$id  $name"
+                printf '%s\t%s\n' "$id" "$name" >> "$FAIL_FILE"
+                FAILED=$((FAILED + 1))
+              fi
+            done < "$CAND_FILE"
+          else
+            echo "ℹ️ 没有符合条件的运行记录需要删除"
+          fi
+
+          # -- 落盘统计，供摘要步骤消费 --
+          {
+            echo "STATS_MODE=$CLEAN_BY"
+            echo "STATS_KEEP_COUNT=$KEEP_COUNT"
+            echo "STATS_KEEP_DAYS=$KEEP_DAYS"
+            echo "STATS_DRY_RUN=$DRY_RUN"
+            echo "STATS_TOTAL=$TOTAL"
+            echo "STATS_DEL_COUNT=$DEL_COUNT"
+            echo "STATS_SKIPPED=$SKIPPED"
+            echo "STATS_SELF_SKIPPED=$SELF_SKIPPED"
+            echo "STATS_FAILED=$FAILED"
+            echo "STATS_FINISHED=1"
+          } > "$STATS_FILE"
+
+          if (( FAILED > 0 )); then
+            echo "::error::有 ${FAILED} 条运行记录删除失败，详见 Summary 的失败清单"
+            exit 1
+          fi
+          echo "✅ 清理完成（模式：$CLEAN_BY，待删：$DEL_COUNT，失败：$FAILED）"
+
+      # ---------------------------------------------------------------
+      # Step 3: 输出运行摘要（显示在运行页面底部的 Summary 区域）
+      #   包含：参数、扫描/删除/跳过统计、删除清单（最多 50 条）、
+      #   失败清单、预演提示；失败时给出排查指引
+      # ---------------------------------------------------------------
+      - name: 输出运行摘要
+        if: ${{ always() }}
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          set -uo pipefail
+          STATS_FILE="$RUNNER_TEMP/cleanup-stats.env"
+          CAND_FILE="$RUNNER_TEMP/cleanup-candidates.tsv"
+          FAIL_FILE="$RUNNER_TEMP/cleanup-failed.txt"
+
+          {
+            echo "## 🧹 Workflow 运行历史清理摘要"
+            echo ""
+            if [[ -f "$STATS_FILE" && -s "$STATS_FILE" ]]; then
+              set -a
+              # shellcheck disable=SC1090
+              source "$STATS_FILE"
+              set +a
+
+              MODE_ZH="按条数（num）"
+              [[ "${STATS_MODE}" == "date" ]] && MODE_ZH="按天数（date）"
+
+              echo "| 项目 | 值 |"
+              echo "|---|---|"
+              echo "| 运行编号 | #${GITHUB_RUN_NUMBER} |"
+              echo "| 清理依据 | ${MODE_ZH} |"
+              if [[ "${STATS_MODE}" == "num" ]]; then
+                echo "| 保留最近条数 | ${STATS_KEEP_COUNT} |"
+              else
+                echo "| 保留最近天数 | ${STATS_KEEP_DAYS} |"
+              fi
+              echo "| 预演模式 | \`${STATS_DRY_RUN}\` |"
+              echo "| 扫描记录总数（已排除自身） | ${STATS_TOTAL} |"
+              if [[ "${STATS_DRY_RUN}" == "true" ]]; then
+                echo "| 待删除记录数（预演，未删除） | ${STATS_DEL_COUNT} |"
+              else
+                echo "| 实际删除记录数 | $(( STATS_DEL_COUNT - STATS_FAILED )) |"
+                echo "| 删除失败数 | ${STATS_FAILED} |"
+              fi
+              echo "| 跳过（排队/进行中） | ${STATS_SKIPPED} |"
+              echo "| 跳过（本 workflow 自身） | ${STATS_SELF_SKIPPED} |"
+              echo "| 运行状态 | \`${JOB_STATUS}\` |"
+
+              if [[ -s "$CAND_FILE" ]]; then
+                LABEL="将删除"
+                [[ "${STATS_DRY_RUN}" == "true" ]] || LABEL="已处理"
+                echo ""
+                echo "### ${LABEL}的运行记录（最多显示 50 条）"
+                echo ""
+                echo "| Run ID | 名称 | 创建时间 | 完成时间 |"
+                echo "|---|---|---|---|"
+                head -n 50 "$CAND_FILE" | while IFS=$'\t' read -r id name created updated; do
+                  echo "| \`#$id\` | ${name} | ${created} | ${updated} |"
+                done
+                if (( STATS_DEL_COUNT > 50 )); then
+                  echo ""
+                  echo "> 其余 $(( STATS_DEL_COUNT - 50 )) 条已省略。"
+                fi
+              fi
+
+              if [[ -s "$FAIL_FILE" ]]; then
+                echo ""
+                echo "### ⚠️ 删除失败的运行记录"
+                echo ""
+                while IFS=$'\t' read -r id name; do
+                  [[ -z "$id" ]] && continue
+                  echo "- \`#$id\` ${name}"
+                done < "$FAIL_FILE"
+              fi
+
+              if [[ "${STATS_DRY_RUN}" == "true" ]]; then
+                echo ""
+                echo "> ℹ️ 当前为**预演模式**，未执行任何删除。确认上方清单无误后，重新触发本 workflow 并将 \`dry_run\` 设为 \`false\` 即可真正清理。"
+              fi
+            else
+              echo "| 项目 | 值 |"
+              echo "|---|---|"
+              echo "| 运行状态 | \`${JOB_STATUS}\` |"
+              echo ""
+              echo "### ⚠️ 本次运行未完成清理"
+              echo ""
+              echo "请查看上方失败步骤的日志。常见原因："
+              echo ""
+              echo "- 参数校验失败 → 检查 \`clean_by\` 取值、\`keep_count\` / \`keep_days\` 是否为正整数"
+              echo "- 获取记录失败 → \`GITHUB_TOKEN\` 需具备 \`actions: write\` 权限（见仓库 README 中的说明）"
+              echo "- 删除失败 → 可能触发 API 限流，可稍后重试"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
