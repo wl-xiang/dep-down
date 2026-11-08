@@ -85,6 +85,7 @@ def _base_mapping(p):
         "APP_BUILD_TARGET": p.app_build_target,
         "APP_SOURCE_DIR": p.app_source_dir,
         "APP_VOLUME": json.dumps(p.mount_path),
+        "NEEDS_MAIN_PY": "1" if p.prod_command == "python main.py" else "0",
         "IMAGE_LIST": " ".join(p.image_refs),
         "DEV_IMAGE": p.dev_image,
         "PROD_COMMAND": p.prod_command,
@@ -192,8 +193,18 @@ def _app_options_block(p):
             lines.append(f"      - \"{p.app_port}:{p.app_port}\"\n")
     if p.env_file_list:
         lines.append("    env_file:\n")
-        lines.extend(f"      - {json.dumps(x)}\n" for x in p.env_file_list)
+        # env 文件默认相对应用根目录（{{SRC_ROOT}} 由 install.sh 替换）；
+        # 绝对路径原样保留
+        lines.extend(
+            f"      - {json.dumps(_env_file_path(x))}\n" for x in p.env_file_list
+        )
     return "".join(lines)
+
+
+def _env_file_path(path):
+    if path.startswith("/"):
+        return path
+    return "{{SRC_ROOT}}/" + path
 
 
 def _depends_on_block(p):
@@ -275,6 +286,21 @@ def render_requirements(p):
     return text
 
 
+def render_main_py():
+    """占位入口：install.sh 在应用根目录无 main.py 且启动命令为默认值时复制。"""
+    return _load("main.py.tmpl")
+
+
+def render_install_sh(p, out_file):
+    """渲染安装脚本到 dist/（独立 artifact，不进 src tgz）。"""
+    content = _sub(_load("install.sh.tmpl"), _base_mapping(p))
+    path = Path(out_file)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
 def render_src_readme(p):
     services = []
     if p.enable_nginx:
@@ -322,9 +348,12 @@ def render_all(p, staging):
 
     files = {
         "Dockerfile": render_dockerfile(p),
-        "docker-compose.yaml": render_compose(p),
+        # .tpl 后缀：不会被 docker compose 自动发现/被 -f 误用，
+        # 由 install.sh 渲染为 docker-compose.yaml（{{SRC_ROOT}} -> 应用根目录）
+        "docker-compose.yaml.tpl": render_compose(p),
         "Makefile": render_makefile(p),
         "requirements.txt": render_requirements(p),
+        "main.py": render_main_py(),
         "README.md": render_src_readme(p),
     }
     for name, content in files.items():

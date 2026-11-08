@@ -93,7 +93,7 @@ on:
         required: true
         default: 'devcontainer'
       app_source_dir:
-        description: 'Source directory mounted into the container as /app (relative to the compose file)'
+        description: 'Subdirectory of the project root mounted into the container as /app (default "." = whole root; the project root is passed to install.sh at install time)'
         type: string
         required: true
         default: '.'
@@ -176,8 +176,23 @@ jobs:
           tar tzf "${{ steps.build.outputs.src_tgz }}" > /tmp/src_tgz.list
           head -30 /tmp/src_tgz.list
           echo "... $(wc -l < /tmp/src_tgz.list) entries total"
+          # install.sh 依赖的关键文件必须存在
+          grep -q 'devcontainer-src/docker-compose.yaml.tpl$' /tmp/src_tgz.list \
+            || { echo "::error::src 包缺少 docker-compose.yaml.tpl"; exit 1; }
+          grep -q 'devcontainer-src/main.py$' /tmp/src_tgz.list \
+            || { echo "::error::src 包缺少占位 main.py"; exit 1; }
           echo "--- checksum (与 Summary 表格中的 SHA256 对比) ---"
           sha256sum "${{ steps.build.outputs.src_tgz }}"
+          if [ -n "${{ steps.build.outputs.install_sh }}" ]; then
+            echo "--- install.sh ---"
+            test -x "${{ steps.build.outputs.install_sh }}" \
+              || { echo "::error::install.sh 缺少可执行权限"; exit 1; }
+            bash -n "${{ steps.build.outputs.install_sh }}"
+            sha256sum "${{ steps.build.outputs.install_sh }}"
+          else
+            echo "::error::install.sh 未生成"
+            exit 1
+          fi
           if [ -n "${{ steps.build.outputs.bundle_tgz }}" ]; then
             echo "--- ${{ steps.build.outputs.bundle_name }} ---"
             # bundle 是 gzip 压缩的镜像归档：根目录必须能直接看到 manifest.json（或 OCI index.json）
@@ -199,6 +214,19 @@ jobs:
         with:
           name: ${{ steps.build.outputs.src_name }}
           path: ${{ steps.build.outputs.src_tgz }}
+          compression-level: 0
+          if-no-files-found: error
+
+      # 安装脚本：构建时已 chmod 755，此处显式再确认一次
+      # （注：artifact zip 解压后可能丢失 +x，文档统一引导用户 bash install.sh 调用）
+      - name: Make install.sh executable
+        run: chmod +x "${{ steps.build.outputs.install_sh }}"
+
+      - name: Upload install script artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.build.outputs.install_name }}
+          path: ${{ steps.build.outputs.install_sh }}
           compression-level: 0
           if-no-files-found: error
 

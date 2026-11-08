@@ -26,6 +26,7 @@ def build_markdown(p, results):
     images = results.get("images") or [p.app_image]
     src_tgz = results.get("src_tgz")
     bundle_tgz = results.get("bundle_tgz")
+    install_sh = results.get("install_sh")
     skipped_docker = results.get("skipped_docker", False)
 
     out = []
@@ -103,6 +104,11 @@ def build_markdown(p, results):
             f"| {src_tgz.name} | {human_size(src_tgz.stat().st_size)} "
             f"| `{sha256_of(src_tgz)}` |"
         )
+    if install_sh:
+        out.append(
+            f"| {install_sh.name}（安装脚本） | {human_size(install_sh.stat().st_size)} "
+            f"| `{sha256_of(install_sh)}` |"
+        )
     if bundle_tgz:
         out.append(
             f"| {bundle_tgz.name} | {human_size(bundle_tgz.stat().st_size)} "
@@ -112,31 +118,33 @@ def build_markdown(p, results):
 
     out.append("### 内网使用步骤")
     out.append("")
-    out.append("1. 从本次运行页面底部 **Artifacts** 下载两个产物"
-               "（zip 仅为封装、不压缩，解压即得 tgz），"
-               "传输到与目标平台一致的内网机器，并用上表 SHA256 校验完整性。")
+    out.append("1. 从本次运行页面底部 **Artifacts** 下载三个产物"
+               "（`install` 脚本、`src` 与 `bundle`；zip 仅为封装、不压缩，"
+               "解压即得文件），传输到与目标平台一致的内网机器，"
+               "并用上表 SHA256 校验完整性。")
     out.append("2. 导入镜像（tgz 是 gzip 压缩的镜像归档，可直接 load）:")
     out.append("")
     out.append("```bash")
     out.append(f"docker load -i devcontainer-bundle_{p.tag}.tgz")
     out.append("```")
     out.append("")
-    out.append("3. 把源码包内容铺到应用根目录（`--skip-old-files` 不覆盖已存在的业务文件）:")
+    out.append("3. 安装到应用根目录（在 install.sh 与 src tgz 所在目录执行，"
+               "参数为你的项目根目录；会把 src 解压到 `<项目根>/docs/devcontainer`、"
+               "渲染 `docker-compose.yaml`，并在缺少 `main.py` 时放置占位入口）:")
     out.append("")
     out.append("```bash")
-    out.append(f"tar xzf devcontainer-src_{p.tag}.tgz -C ~/apps/myapp1 \\")
-    out.append("    --strip-components=1 --skip-old-files")
-    out.append("cd ~/apps/myapp1")
+    out.append("bash install.sh ~/apps/myapp1")
     out.append("```")
     out.append("")
     out.append(f"4. 离线自检（确认镜像已导入、架构匹配；prod 命令为 `{p.prod_command}`):")
     out.append("")
     out.append("```bash")
+    out.append("cd ~/apps/myapp1/docs/devcontainer")
     out.append("make check")
     out.append("```")
     out.append("")
     if p.dev_tools_enabled:
-        out.append("5. 开发调试:")
+        out.append("5. 开发调试（均在 `docs/devcontainer` 目录执行）:")
         out.append("")
         out.append("```bash")
         out.append("make shell      # 交互式 bash")
@@ -195,10 +203,15 @@ def emit(p, results):
         entries = [("tag", p.tag)]
         src_tgz = results.get("src_tgz")
         bundle_tgz = results.get("bundle_tgz")
+        install_sh = results.get("install_sh")
         if src_tgz:
             entries.append(("src_tgz", str(src_tgz)))
             entries.append(("src_name", src_tgz.name))
             entries.append(("src_sha256", sha256_of(src_tgz)))
+        if install_sh:
+            entries.append(("install_sh", str(install_sh)))
+            entries.append(("install_name", f"devcontainer-install_{p.tag}"))
+            entries.append(("install_sha256", sha256_of(install_sh)))
         if bundle_tgz:
             entries.append(("bundle_tgz", str(bundle_tgz)))
             entries.append(("bundle_name", bundle_tgz.name))

@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# 由 scripts/devcontainer-builder 生成（TAG: {{TAG}}），请勿手工编辑。
+#
+# 用法：把本脚本与 devcontainer-src_{{TAG}}.tgz 放在同一目录，然后执行：
+#   bash install.sh /path/to/your/project-root
+# （Artifact 的 zip 解压后可能丢失可执行权限，统一用 `bash install.sh` 调用）
+#
+# 作用：
+#   1. 在 <project-root>/docs/devcontainer 下解压 devcontainer-src_{{TAG}}.tgz
+#   2. 渲染 docker-compose.yaml.tpl -> docker-compose.yaml：
+#      {{SRC_ROOT}}      -> <project-root> 绝对路径（挂载为容器 /app）
+#      {{SRC_ROOT_NAME}} -> <project-root> 目录名（拼 compose 项目名）
+#   3. 若 <project-root> 没有 main.py 且启动命令为默认值，复制占位 main.py
+set -euo pipefail
+
+NEEDS_MAIN_PY={{NEEDS_MAIN_PY}}   # 1 = prod_command 为默认 python main.py
+
+usage() {
+    echo "用法: bash $0 <SRC_ROOT>"
+    echo "  SRC_ROOT = 你的项目根目录（必须已存在；devcontainer 文件将安装到 <SRC_ROOT>/docs/devcontainer）"
+    exit 2
+}
+
+[ "$#" -eq 1 ] || usage
+SRC_ROOT=$1
+[ -d "$SRC_ROOT" ] || { echo "错误: SRC_ROOT 不是目录: $SRC_ROOT"; exit 1; }
+SRC_ROOT=$(cd "$SRC_ROOT" && pwd -P)
+
+# 渲染进 YAML 双引号标量 / sed 替换串的路径必须可安全转义
+case "$SRC_ROOT" in
+    *'"'*|*'\'*) echo "错误: 路径含引号或反斜杠，无法安全渲染: $SRC_ROOT"; exit 1 ;;
+esac
+if [ "${SRC_ROOT#*$'\n'}" != "$SRC_ROOT" ]; then
+    echo "错误: 路径含换行符，无法安全渲染: $SRC_ROOT"
+    exit 1
+fi
+
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
+shopt -s nullglob
+tgzs=("$SCRIPT_DIR"/devcontainer-src_*.tgz)
+shopt -u nullglob
+if [ "${#tgzs[@]}" -eq 0 ]; then
+    echo "错误: 未在 $SCRIPT_DIR 找到 devcontainer-src_*.tgz（请与安装脚本放在同一目录）"
+    exit 1
+fi
+if [ "${#tgzs[@]}" -gt 1 ]; then
+    echo "错误: $SCRIPT_DIR 下有多个 src 包，请只保留本次使用的那个："
+    printf '  %s\n' "${tgzs[@]}"
+    exit 1
+fi
+TGZ=${tgzs[0]}
+
+DEST="$SRC_ROOT/docs/devcontainer"
+if [ -e "$DEST" ]; then
+    echo "错误: $DEST 已存在。"
+    echo "  重新安装请先删除该目录：rm -rf \"$DEST\"（注意保留你手工修改过的 docker-compose.yaml 等文件）"
+    exit 1
+fi
+
+mkdir -p "$DEST"
+tar xzf "$TGZ" -C "$DEST" --strip-components=1
+
+TPL="$DEST/docker-compose.yaml.tpl"
+[ -f "$TPL" ] || { echo "错误: 包内缺少 docker-compose.yaml.tpl: $TPL"; exit 1; }
+
+# compose 项目名：<目录名> 规范化为 [a-z0-9][a-z0-9_-]*
+SRC_ROOT_NAME=$(basename "$SRC_ROOT" | tr '[:upper:]' '[:lower:]' \
+    | sed -E 's/[^a-z0-9_-]+/-/g; s/^[-_]+//; s/[-_]+$//')
+[ -n "$SRC_ROOT_NAME" ] || SRC_ROOT_NAME="app"
+case "$SRC_ROOT_NAME" in
+    [a-z0-9]*) ;;
+    *) SRC_ROOT_NAME="app-$SRC_ROOT_NAME" ;;
+esac
+
+esc() { printf '%s' "$1" | sed -e 's/[|&\\]/\\&/g'; }
+sed -e "s|{{SRC_ROOT}}|$(esc "$SRC_ROOT")|g" \
+    -e "s|{{SRC_ROOT_NAME}}|$(esc "$SRC_ROOT_NAME")|g" \
+    "$TPL" > "$DEST/docker-compose.yaml"
+
+if [ "$NEEDS_MAIN_PY" = "1" ] && [ ! -e "$SRC_ROOT/main.py" ]; then
+    cp "$DEST/main.py" "$SRC_ROOT/main.py"
+    echo "已创建占位入口 $SRC_ROOT/main.py（make up 默认运行 python main.py，请替换为真实入口）"
+fi
+
+echo "安装完成: $DEST"
+echo ""
+echo "后续步骤："
+echo "  1. docker load -i devcontainer-bundle_{{TAG}}.tgz    # 若尚未导入镜像"
+echo "  2. cd \"$DEST\""
+echo "  3. make check && make up && make logs"
+echo "  （make shell / lint / compile / test 也在该目录执行；容器默认以当前用户身份运行）"

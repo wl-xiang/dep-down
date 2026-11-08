@@ -3,10 +3,12 @@
 
 执行序列（对应计划书 4.6）:
     1. 读取环境变量 → lib/params.py 解析与校验
-    2. lib/render.py 渲染 Dockerfile / docker-compose.yaml / Makefile / requirements.txt
+    2. lib/render.py 渲染 Dockerfile / docker-compose.yaml.tpl / Makefile /
+       requirements.txt / main.py 占位 / install.sh
     3. lib/pip.py 复用 pip_download 逻辑下载 wheels/
     4. lib/docker.py buildx 构建 prod(/dev)、拉取外挂镜像、docker save 直出 gzip
-    5. lib/package.py 打包 devcontainer-src_<ts>.tgz；bundle 已在上一步直出
+    5. lib/package.py 打包 devcontainer-src_<ts>.tgz；bundle 已在上一步直出；
+       install.sh 作为独立产物写入 dist/（不进 src tgz）
     6. lib/summary.py 写 GITHUB_STEP_SUMMARY / GITHUB_OUTPUT
 
 本地联调可设置 DEVCONTAINER_SKIP_DOCKER=1 跳过 docker 步骤。
@@ -99,6 +101,12 @@ def main():
     print(f"== src 产物: {src_tgz} "
           f"({package_mod.human_size(src_tgz.stat().st_size)}) ==")
 
+    # install.sh：独立 artifact（渲染 compose .tpl、解压 src 包到 docs/devcontainer）
+    install_sh = render_mod.render_install_sh(
+        p, REPO_ROOT / "dist" / "install.sh"
+    )
+    print(f"== install 脚本: {install_sh} ==")
+
     if bundle_tgz is not None:
         print(f"== bundle 产物: {bundle_tgz} "
               f"({package_mod.human_size(bundle_tgz.stat().st_size)}) ==")
@@ -107,6 +115,7 @@ def main():
     results = {
         "src_tgz": src_tgz,
         "bundle_tgz": bundle_tgz,
+        "install_sh": install_sh,
         "images": images,
         "wheels_count": wheels_count,
         "skipped_docker": skip_docker,
