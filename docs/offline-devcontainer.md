@@ -250,9 +250,12 @@ make up && make logs
   离线安装头（install.sh 预置的初始状态）时，安装目录下全部 `*.whl`——
   只扔 wheel 进目录、不改 requirements 也能直接补装。
 - 构建上下文是临时目录 `.addon-build`（只含 wheels），不会把整个项目目录
-  发给 docker daemon，也不受项目根目录 `.dockerignore`（排除 wheels/）
-  影响；构建结束自动清理。请勿在项目根目录直接 `docker build .`——那会把
-  整个项目作为上下文，且 `wheels/` 已被 .dockerignore 排除导致 COPY 失败。
+  发给 docker daemon。docker 只按**上下文根目录**查找 `.dockerignore`，因此
+  项目根目录那份（排除 wheels/）不会作用于补装构建；build.sh 还会显式清理
+  上下文内的任何 dockerignore（双保险），云端每次构建也在 Verify 步骤用
+  mock docker 干跑回归测试断言这一点。构建结束临时目录自动清理。请勿在
+  项目根目录直接 `docker build .`——那会把整个项目作为上下文，且 `wheels/`
+  已被 .dockerignore 排除导致 COPY 失败。
 - 回滚：重新 `docker load -i devcontainer-docker-images_<时间戳>.tgz` 即可
   恢复原镜像。
 

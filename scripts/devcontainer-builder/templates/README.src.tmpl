@@ -125,6 +125,7 @@ make up && make logs
 - `wheels/requirements.txt` 含真实包名时按清单装；只有离线安装头（
   install.sh 预置的状态）时，安装目录下全部 `*.whl`。
 - build.sh 的构建上下文是临时目录 `.addon-build`（只含 wheels），不会把
-  整个项目目录发给 docker daemon，也不受根目录 `.dockerignore` 影响；
-  构建结束自动清理。
+  整个项目目录发给 docker daemon，也不受根目录 `.dockerignore`（排除
+  wheels/）影响——docker 只按上下文根目录查找 `.dockerignore`，且 build.sh
+  会显式清理上下文内的任何 dockerignore 双保险；构建结束自动清理。
 - 回滚：重新 `docker load -i devcontainer-docker-images_{{TS}}.tgz` 即可恢复原镜像。

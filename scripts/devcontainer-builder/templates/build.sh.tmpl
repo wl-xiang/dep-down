@@ -32,10 +32,16 @@ fi
 NEW_SUFFIX=${1:-addon-{{TS}}}
 
 # 构建上下文使用临时目录（只含 wheels），避免把整个项目目录发给 docker daemon；
-# 因此不受根目录 .dockerignore（排除 wheels/）影响
+# docker 只按【上下文根目录】查找 .dockerignore，因此项目根目录的 .dockerignore
+# （排除 wheels/）不会作用于本次构建——离线补装不受它影响
 STAGING="$SRC_ROOT/.addon-build"
 rm -rf "$STAGING"
 mkdir -p "$STAGING/wheels"
+# 双保险：上下文内绝不允许出现任何 dockerignore——项目根目录那份排除了
+# wheels/，一旦被带入本上下文，COPY wheels/ 会被静默忽略而构建失败
+# （"failed to compute cache key: not found"）。正常流程本目录只装 wheels，
+# 此处显式清理以防未来改动引入或异常残留。
+rm -f "$STAGING/.dockerignore" "$STAGING/Dockerfile.dockerignore"
 cp "$WHEELS_DIR"/*.whl "$STAGING/wheels/"
 if [ -f "$WHEELS_DIR/requirements.txt" ]; then
     cp "$WHEELS_DIR/requirements.txt" "$STAGING/wheels/"
