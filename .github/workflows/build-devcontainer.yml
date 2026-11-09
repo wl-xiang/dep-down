@@ -95,7 +95,7 @@ on:
           - 'prod-only'
           - 'dev-only'
       image_prefix:
-        description: 'Image name prefix (produces <prefix>:prod-<tag> and <prefix>:dev-<tag>)'
+        description: 'Image name prefix (prod <prefix>:<tag>, dev <prefix>-dev:<tag>)'
         type: string
         required: true
         default: 'mydevc1'
@@ -218,6 +218,10 @@ jobs:
             || { echo "::error::src 包缺少 Makefile"; exit 1; }
           grep -q 'devcontainer-src/README.md$' /tmp/src_tgz.list \
             || { echo "::error::src 包缺少 README.md"; exit 1; }
+          # bundle README 必须包含 AI Agent 使用约定（容器内开发测试，不依赖宿主机 Python）
+          tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/README.md > /tmp/readme.md
+          grep -q 'AI Agent' /tmp/readme.md \
+            || { echo "::error::src README.md 未包含 AI Agent 使用约定"; exit 1; }
           grep -q 'devcontainer-src/.dockerignore$' /tmp/src_tgz.list \
             || { echo "::error::src 包缺少 .dockerignore"; exit 1; }
           grep -q 'devcontainer-src/.gitignore$' /tmp/src_tgz.list \
@@ -249,6 +253,8 @@ jobs:
               || { echo "::error::readme.html 未包含 dist/ 放置说明"; exit 1; }
             grep -q -- '--load' "${{ steps.build.outputs.readme_html }}" \
               || { echo "::error::readme.html 未包含 --load 用法说明"; exit 1; }
+            grep -q 'AI Agent' "${{ steps.build.outputs.readme_html }}" \
+              || { echo "::error::readme.html 未包含 AI Agent 使用约定"; exit 1; }
             head -1 "${{ steps.build.outputs.readme_html }}" | grep -q '<!DOCTYPE html>' \
               || { echo "::error::readme.html 不是 HTML 文档"; exit 1; }
             sha256sum "${{ steps.build.outputs.readme_html }}"
@@ -387,7 +393,7 @@ jobs:
         run: chmod +x "${{ steps.build.outputs.install_sh }}"
 
       # Artifacts 只能是 zip 封装：设 compression-level 0 让 zip 只做存储，
-      # 避免 tgz 再被 zip 二次压缩。唯一产物 devcontainer-bundle_<时间戳>，
+      # 避免 tgz 再被 zip 二次压缩。唯一产物 <image_prefix>_devcontainer_<时间戳>，
       # zip 内含镜像归档 tgz、src tgz、install.sh 与 readme.html 四个文件
       - name: Upload bundle artifact (docker images tgz + src tgz + install.sh + readme.html)
         uses: actions/upload-artifact@v4

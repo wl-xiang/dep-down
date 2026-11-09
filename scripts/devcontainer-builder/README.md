@@ -36,7 +36,7 @@ scripts/devcontainer-builder/
     ├── build.sh.tmpl              # 离线补装入口（项目根执行，docker build 根目录 Dockerfile）
     ├── dockerignore.tmpl          # 项目根 .dockerignore（安装/合并；构建上下文排除 dist/ wheels/ 等）
     ├── gitignore.tmpl             # 项目根 .gitignore（安装/合并；忽略离线产物与补装缓存）
-    ├── readme.html.tmpl           # bundle 安装说明（HTML，放进 Artifact zip，引导 dist/ 解压 + install.sh ../，含 --load 用法）
+    ├── readme.html.tmpl           # bundle 安装说明（HTML，放进 Artifact zip，引导 dist/ 解压 + install.sh ../，含 --load 用法与 AI Agent 约定）
     └── README.src.tmpl            # src 产物内的快速上手说明（项目根为 README-devcontainer.md）
 ```
 
@@ -66,8 +66,8 @@ scripts/devcontainer-builder/
 | `PROD_COMMAND` | `python main.py` | prod 服务命令 |
 | `BUILD_DEV_IMAGE` | `true` | 是否构建 dev 镜像 |
 | `DEV_IMAGE_ONLY` | `false` | 仅构建 dev 镜像：不再区分 prod/dev，部署也用 dev 镜像，镜像归档只含该镜像（优先于 `BUILD_DEV_IMAGE`） |
-| `IMAGE_PREFIX` | `mydevc1` | 镜像名前缀（生成 `<prefix>:prod-<tag>` / `<prefix>:dev-<tag>`） |
-| `IMAGE_TAG` | `latest` | 镜像 TAG 后缀：`latest`（默认）或 `timestamp`（构建时间戳，UTC+8） |
+| `IMAGE_PREFIX` | `mydevc1` | 镜像名前缀（prod `<prefix>:<tag>` / dev `<prefix>-dev:<tag>`；Artifact 名为 `<prefix>_devcontainer_<ts>`） |
+| `IMAGE_TAG` | `latest` | 镜像 TAG：`latest`（默认）或 `timestamp`（构建时间戳，UTC+8） |
 | `APP_SOURCE_DIR` | `.` | 挂载为 /app 的源码目录（不支持 `~`） |
 | `APP_PORT` | `3000:3000` | 端口映射 `host:container`（单端口等价同端口）；启用 nginx 时只暴露容器端口 |
 | `ENV_FILE` | 空 | 注入 app 服务的 env 文件，逗号/空格分隔 |
@@ -118,7 +118,8 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   `${SRC_ROOT_NAME:-app}`（compose 项目名后缀）由 docker compose 运行时解析。
 - **离线补装（build.sh + Dockerfile.addon→根目录 Dockerfile）**：wheel 放
   项目根 `wheels/`，项目根执行 `bash build.sh` 基于现有镜像逐个
-  `docker build --target` 生成 `<前缀>:<stage>-addon-<时间戳>` 新镜像。wheel
+  `docker build --target` 生成 addon 新镜像（prod `<前缀>:<后缀>` / dev
+  `<前缀>-dev:<后缀>`）。wheel
   复制到镜像 `/tmp/addon-wheels` 后在同一 RUN 层内安装并删除（不增大镜像）；
   构建上下文为临时目录 `.addon-build`（只含 wheels——docker 只按上下文根目录
   查找 .dockerignore，故不受根目录排除 wheels/ 影响；build.sh 还会显式清理
@@ -162,16 +163,26 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
 - **compose run 与 profile**：命令行显式指定的服务会自动激活其 profiles
   （compose v2 行为），因此 `DEV_RUN` 无需 `--profile dev`；但
   `make build`（`compose build`）需要 `--profile dev` 才会构建 dev 服务。
-- **镜像命名与 TAG**：`<前缀>:<stage>-<TAG 后缀>`（如
-  `devcontainer:prod-latest` / `devcontainer:dev-20260101-120000`）；TAG 后缀
+- **镜像命名与 TAG**：prod 为 `<前缀>:<TAG>`、dev 为 `<前缀>-dev:<TAG>`（如
+  `devcontainer:latest` / `devcontainer-dev:latest`；`IMAGE_TAG=timestamp` 时为
+  `devcontainer:20260101-120000` / `devcontainer-dev:20260101-120000`）。TAG
   由 `IMAGE_TAG` 选择 `latest`（默认）或构建时间戳（UTC+8）。产物文件名
   （bundle zip / 镜像归档 tgz / src tgz）统一使用 UTC+8 时间戳。
-- **唯一 Artifact**：`devcontainer-bundle_<时间戳>` 一个 zip 内含
+- **唯一 Artifact**：`<镜像前缀>_devcontainer_<时间戳>` 一个 zip 内含
   `devcontainer-docker-images_<时间戳>.tgz`（docker save 直出 gzip，docker
   load 用）、`devcontainer-src_<时间戳>.tgz`、`install.sh` 与 `readme.html`
   四个文件；"Bundle" 专指该外部 zip，镜像归档文件名用 "Docker Images"。
   安装方式：zip 放项目根 `dist/` 解压后 `bash install.sh ../`（加 `--load`
   可在安装开始前自动 docker load 同目录的镜像归档 tgz）。
+- **镜像瘦身**：基础镜像 slim-bookworm；apt 安装后同层 `apt-get clean` 并清理
+  lists/archives；pip 统一 `--no-compile`（不生成 `.pyc`）；Node 仅复制
+  node/npm 并删除 npm 自带 docs/man；Oracle `full` 模式的 wget/unzip 只用于
+  构建期，安装/下载/`apt-get purge --auto-remove` 在同一 RUN 层完成，不残留
+  在运行时镜像。dev 与 prod 共享基础层，`docker save` 归档中公共层只存一份。
+- **AI Agent 约定**：src 产物 `README.md`（安装为 `README-devcontainer.md`）与
+  `readme.html` 均包含「给 AI Agent 的使用约定」：Python/Node 命令一律通过
+  `docker compose run --rm dev ...` / `make test` 等在容器内执行，不依赖宿主机
+  Python；workflow 的 Verify 步骤会 grep 校验该段落存在。
 - **glibc 语义**：基础镜像固定 slim-bookworm（glibc 2.36），glibc 参数仅决定
   pip download 请求的 manylinux 标签集合（目标 glibc 及以下全部标签）。
 - **YAML 安全**：compose 中的 `command`、`/app` 挂载与 `environment` 值使用

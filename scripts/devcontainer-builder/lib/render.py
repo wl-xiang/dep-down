@@ -102,10 +102,10 @@ RUN set -eux; \\
         && grep -Ev '^[[:space:]]*(#|--|$)' /tmp/addon-wheels/requirements.txt \\
         | grep -q .; \\
     then \\
-        pip install --no-index --find-links=/tmp/addon-wheels \\
+        pip install --no-compile --no-index --find-links=/tmp/addon-wheels \\
             -r /tmp/addon-wheels/requirements.txt; \\
     else \\
-        pip install --no-index --find-links=/tmp/addon-wheels \\
+        pip install --no-compile --no-index --find-links=/tmp/addon-wheels \\
             /tmp/addon-wheels/*.whl; \\
     fi; \\
     rm -rf /tmp/addon-wheels
@@ -134,11 +134,11 @@ def render_dockerfile_addon(p):
 
 
 def render_build_sh(p):
-    """build.sh：docker build Dockerfile.addon，默认新 TAG 后缀为 addon-<时间戳>，
-    新镜像命名沿用 <前缀>:<stage>-<TAG 后缀>（如 <前缀>:dev-addon-<ts>）。"""
+    """build.sh：docker build Dockerfile.addon，默认新 TAG 为 addon-<时间戳>，
+    新镜像沿用镜像仓库名：prod <前缀>:<后缀>、dev <前缀>-dev:<后缀>。"""
     calls = "\n".join(
-        f'build {target} "{image}" "{stage}-$NEW_SUFFIX"'
-        for target, image, stage in _addon_targets(p)
+        f'build {target} "{image}" "$NEW_SUFFIX"'
+        for target, image, _stage in _addon_targets(p)
     )
     return _sub(_load("build.sh.tmpl"), {**_base_mapping(p), "BUILD_CALLS": calls})
 
@@ -155,9 +155,10 @@ def _sub(text, mapping):
 
 def _base_mapping(p):
     return {
-        # TS = 构建时间戳（UTC+8，用于产物文件名）；TAG = 镜像 TAG 后缀（latest 或时间戳）
+        # TS = 构建时间戳（UTC+8，用于产物文件名）；TAG = 镜像 TAG（latest 或时间戳）
         "TS": p.ts,
         "TAG": p.tag,
+        "BUNDLE_NAME": p.bundle_name,
         "PLATFORM": p.platform,
         "DOCKER_PLATFORM": p.docker_platform,
         "PYTHON_VERSION": p.python_version,
@@ -211,7 +212,8 @@ def _apt_block(packages):
         "RUN apt-get update \\\n"
         "    && apt-get install -y --no-install-recommends \\\n"
         f"        {' '.join(packages)} \\\n"
-        "    && rm -rf /var/lib/apt/lists/*\n"
+        "    && apt-get clean \\\n"
+        "    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*\n"
     )
 
 
@@ -305,7 +307,8 @@ def _node_block(p):
             "\n# 预装前端工具（构建期联网安装到全局，离线容器内可直接使用）\n"
             f"RUN npm install -g --no-audit --no-fund --registry {p.npm_registry_url} "
             f"{' '.join(p.npm_package_list)} \\\n"
-            "    && npm cache clean --force\n"
+            "    && npm cache clean --force \\\n"
+            "    && rm -rf /tmp/npm-cache\n"
         )
     return text
 
@@ -346,17 +349,18 @@ def _install_block(local_wheels, req_path="requirements.txt"):
         return (
             "# wheels 经 BuildKit bind mount 只读挂载参与安装，不复制进任何镜像层：\n"
             "# 运行容器内没有 wheels（离线补装请用项目根目录 build.sh / Dockerfile.addon）\n"
+            "# --no-compile：不生成 .pyc（配合 PYTHONDONTWRITEBYTECODE=1），减小 site-packages\n"
             f"COPY {req_path} /app/requirements.txt\n"
             "\n"
             "RUN --mount=type=bind,source=wheels,target=/mnt/wheels \\\n"
-            "    pip install --no-index --find-links=/mnt/wheels -r /app/requirements.txt\n"
+            "    pip install --no-compile --no-index --find-links=/mnt/wheels -r /app/requirements.txt\n"
         )
     return (
         "# 发布包不含 wheels/（wheel 仅在构建时经 bind mount 安装，不落镜像层），\n"
         "# 重建时从 pip 源在线安装\n"
         f"COPY {req_path} /app/requirements.txt\n"
         "\n"
-        "RUN pip install -r /app/requirements.txt\n"
+        "RUN pip install --no-compile -r /app/requirements.txt\n"
     )
 
 
@@ -366,11 +370,11 @@ def _dev_pip_block(p, local_wheels):
         return (
             "# dev 工具的 wheel 已随 wheels/ 一起下载，同样经 bind mount 安装，不落镜像层\n"
             "RUN --mount=type=bind,source=wheels,target=/mnt/wheels \\\n"
-            f"    pip install --no-index --find-links=/mnt/wheels {tools}\n"
+            f"    pip install --no-compile --no-index --find-links=/mnt/wheels {tools}\n"
         )
     return (
         "# 发布包不含 wheels/，重建时从 pip 源在线安装\n"
-        f"RUN pip install {tools}\n"
+        f"RUN pip install --no-compile {tools}\n"
     )
 
 
@@ -779,6 +783,7 @@ def render_readme_html(p, out_file):
             **_base_mapping(p),
             "ORACLE_SECTION": _oracle_html_section(p),
             "NPM_SECTION": _npm_html_section(p),
+            "AGENT_HTML_SECTION": _agent_html_section(p),
         },
     )
     path = Path(out_file)
@@ -863,6 +868,124 @@ def _npm_readme_section(p):
 """
 
 
+def _agent_readme_section(p):
+    """bundle README 的 AI Agent 约定：开发/测试统一在容器内执行，不依赖宿主机环境。"""
+    if p.dev_tools_enabled:
+        run = "docker compose run --rm dev"
+        intro = (
+            "本项目的 Python / Node 运行环境**只在容器内**（dev 镜像已内置 "
+            "ruff / pytest）。宿主机无需安装 Python，也不要用宿主机的 "
+            "`python` / `pip` / `pytest` / `npm` 代替容器内环境——版本与依赖"
+            "都可能与镜像不一致。"
+        )
+        rows = [
+            ("查看 Python 版本", f"`{run} python -V`"),
+            ("执行 Python 脚本", f"`{run} python path/to/script.py`"),
+            ("交互式 shell", "`make shell`"),
+            ("运行全部测试", "`make test`"),
+            ("运行单个测试文件", f"`{run} pytest -q tests/test_x.py`"),
+            ("静态检查 / 编译检查", "`make lint` / `make compile`"),
+            ("启动应用 / 查看日志", "`make up` / `make logs`"),
+        ]
+    else:
+        run = "docker compose run --rm app"
+        intro = (
+            "本次**未构建 dev 镜像**，镜像内没有 ruff / pytest；但 Python 运行环境"
+            "仍然只在容器内。宿主机无需安装 Python，也不要用宿主机的 "
+            "`python` / `pip` 代替容器内环境。"
+        )
+        rows = [
+            ("查看 Python 版本", f"`{run} python -V`"),
+            ("执行 Python 脚本", f"`{run} python path/to/script.py`"),
+            ("交互式 shell", f"`{run} bash`"),
+            ("启动应用 / 查看日志", "`make up` / `make logs`"),
+        ]
+    if p.enable_node and p.dev_tools_enabled:
+        rows.append(("安装前端离线依赖", "`make npm-install`"))
+        rows.append(("运行 npm / node", f"`{run} npm ...` / `{run} node ...`"))
+    table = "\n".join(f"| {purpose} | {cmd} |" for purpose, cmd in rows)
+    return f"""
+## 给 AI Agent 的使用约定（重要）
+
+{intro}
+
+所有命令都在**项目根目录**执行，统一通过 docker compose 进入容器：
+
+| 目的 | 推荐命令 |
+| --- | --- |
+{table}
+
+- 容器把项目根目录挂载为 `/app`，工作目录固定 `/app`；容器内修改会直接写回宿主机。
+- **宿主机即使存在 `python` / `pytest` / `npm`，也不要用来运行项目代码或安装依赖**：
+  宿主环境与镜像不一致，所有验证都应以容器内结果为准。
+- 非交互场景（Agent / CI）请用 `{run} <命令>`；`make shell` / `bash` 交互式
+  终端会等待输入，不要用于自动化。
+- 首次使用先执行 `make check` 确认镜像已导入；离线机器不要执行 `make build` 或
+  `docker compose build`。
+- 缺 Python 包时不要在宿主机 `pip install`：把 wheel 放进项目根 `wheels/` 后执行
+  `bash build.sh`（见下文「离线补装 Python 包」）。
+- 不要用宿主机 `python -m venv` / `conda` / 全局 `pytest` / 全局 `npm install`
+  代替容器内环境。
+"""
+
+
+def _agent_html_section(p):
+    """readme.html 中的 AI Agent 使用约定卡片。"""
+    if p.dev_tools_enabled:
+        run = "docker compose run --rm dev"
+        intro = (
+            "运行环境只在容器内（dev 镜像已内置 ruff / pytest）。宿主机无需安装 "
+            "Python，请勿用宿主机的 <code>python</code> / <code>pip</code> / "
+            "<code>pytest</code> / <code>npm</code> 代替容器内环境。"
+        )
+        rows = [
+            ("查看 Python 版本", f"{run} python -V"),
+            ("执行 Python 脚本", f"{run} python path/to/script.py"),
+            ("交互式 shell", "make shell"),
+            ("运行全部测试", "make test"),
+            ("运行单个测试文件", f"{run} pytest -q tests/test_x.py"),
+            ("静态检查 / 编译检查", "make lint / make compile"),
+            ("启动应用 / 查看日志", "make up / make logs"),
+        ]
+    else:
+        run = "docker compose run --rm app"
+        intro = (
+            "本次未构建 dev 镜像（没有 ruff / pytest），但 Python 运行环境仍然只在"
+            "容器内。宿主机无需安装 Python，请勿用宿主机的 <code>python</code> / "
+            "<code>pip</code> 代替容器内环境。"
+        )
+        rows = [
+            ("查看 Python 版本", f"{run} python -V"),
+            ("执行 Python 脚本", f"{run} python path/to/script.py"),
+            ("交互式 shell", f"{run} bash"),
+            ("启动应用 / 查看日志", "make up / make logs"),
+        ]
+    if p.enable_node and p.dev_tools_enabled:
+        rows.append(("安装前端离线依赖", "make npm-install"))
+        rows.append(("运行 npm / node", f"{run} npm ... / {run} node ..."))
+    rows_html = "\n".join(
+        f"          <tr><td>{purpose}</td><td><code>{cmd}</code></td></tr>"
+        for purpose, cmd in rows
+    )
+    return f"""
+    <section class="card">
+      <h2><span class="step-dot">AI</span>给 AI Agent 的使用约定</h2>
+      <p>{intro}</p>
+      <div class="table-wrap">
+        <table>
+          <tr><th>目的</th><th>命令（项目根目录执行）</th></tr>
+{rows_html}
+        </table>
+      </div>
+      <div class="tip"><strong>禁止：</strong>在宿主机执行 <code>python</code> /
+      <code>pip</code> / <code>pytest</code> / <code>npm</code>（宿主机即使存在这些命令，
+      版本与依赖也与镜像不一致，所有验证以容器内结果为准）；缺 Python 包时不要
+      在宿主机安装，请把 wheel 放进项目根 <code>wheels/</code> 后执行
+      <code>bash build.sh</code> 离线补装。离线机器也不要执行 <code>make build</code>。</div>
+    </section>
+"""
+
+
 def render_src_readme(p):
     services = []
     if p.enable_nginx:
@@ -919,6 +1042,7 @@ def render_src_readme(p):
             "NODE_SUMMARY": node_summary,
             "ORACLE_SECTION": _oracle_readme_section(p),
             "NPM_SECTION": _npm_readme_section(p),
+            "AGENT_SECTION": _agent_readme_section(p),
         },
     )
 

@@ -29,7 +29,7 @@ def build_markdown(p, results):
     install_sh = results.get("install_sh")
     readme_html = results.get("readme_html")
     skipped_docker = results.get("skipped_docker", False)
-    bundle_name = f"devcontainer-bundle_{p.ts}"
+    bundle_name = p.bundle_name
 
     out = []
     out.append("## 离线开发环境构建摘要")
@@ -37,7 +37,7 @@ def build_markdown(p, results):
     out.append("| 项目 | 值 |")
     out.append("| --- | --- |")
     out.append(f"| 时间戳 (UTC+8) | `{p.ts}` |")
-    out.append(f"| 镜像 TAG 后缀 | `{p.tag}` ({p.image_tag}) |")
+    out.append(f"| 镜像 TAG | `{p.tag}` ({p.image_tag}) |")
     out.append(f"| 目标平台 | `{p.docker_platform}` |")
     out.append(f"| Python 版本 | `{p.python_version}` |")
     out.append(f"| glibc (wheel 标签) | `{p.glibc_version}` → `{p.pip_platform_tag}` |")
@@ -175,7 +175,7 @@ def build_markdown(p, results):
     out.append("")
     out.append("```bash")
     out.append("mkdir -p /path/to/your-project/dist   # 项目根目录下的 dist/")
-    out.append("# 把 devcontainer-bundle zip 移入 dist/ 后：")
+    out.append(f"# 把 {bundle_name}.zip 移入 dist/ 后：")
     out.append(f"cd /path/to/your-project/dist && unzip {bundle_name}.zip")
     out.append("bash install.sh --load ../              # --load 安装开始前自动 docker load 镜像归档")
     out.append("bash install.sh ../                     # 参数 ../ 即项目根目录（或改用上一行的 --load 一步到位）")
@@ -309,8 +309,8 @@ def emit(p, results):
         entries = [
             ("ts", p.ts),
             ("image_tag", p.tag),
-            # 唯一 Artifact 名（GitHub Actions 上传后为 devcontainer-bundle_<ts>.zip）
-            ("bundle_name", f"devcontainer-bundle_{p.ts}"),
+            # 唯一 Artifact 名（GitHub Actions 上传后为 <prefix>_devcontainer_<ts>.zip）
+            ("bundle_name", p.bundle_name),
         ]
         src_tgz = results.get("src_tgz")
         images_tgz = results.get("images_tgz")
