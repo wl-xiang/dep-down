@@ -3,14 +3,14 @@
 # 说明: 本次仅构建一个 dev 镜像（含开发工具），部署与开发共用该镜像。
 #       基础镜像固定为 slim-bookworm（glibc 2.36），glibc 参数仅控制 pip download
 #       下载 wheel 时选用的 manylinux 标签（低版本标签的 wheel 可在高版本 glibc 运行）。
-FROM --platform={{DOCKER_PLATFORM}} python:{{PYTHON_VERSION}}-slim-bookworm AS dev
+{{NODE_STAGE}}FROM --platform={{DOCKER_PLATFORM}} python:{{PYTHON_VERSION}}-slim-bookworm AS dev
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-{{APT_BLOCK}}{{CUSTOM_INSTALL_BLOCK}}{{ORACLE_BLOCK}}
+{{APT_BLOCK}}{{CUSTOM_INSTALL_BLOCK}}{{ORACLE_BLOCK}}{{NODE_BLOCK}}
 WORKDIR /app
 
 {{INSTALL_BLOCK}}

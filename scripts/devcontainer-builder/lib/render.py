@@ -8,7 +8,7 @@
 import json
 from pathlib import Path
 
-from .params import Params
+from .params import NPM_PACKAGES_CONTAINER_DIR, Params
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 
@@ -27,9 +27,9 @@ _DEV_SERVICE_TMPL = """\
     user: "${HOST_UID:-0}:${HOST_GID:-0}"
     volumes:
       - {{APP_VOLUME}}
-    networks:
+{{DEV_EXTRA_VOLUMES}}    networks:
       - app-net
-    profiles:
+{{DEV_ENV_BLOCK}}    profiles:
       - dev
 """
 
@@ -59,6 +59,34 @@ test: check-dev ## 运行 pytest
 """
 
 _DEV_PHONY = "check-dev shell dev lint compile test "
+
+# 前端离线开发（enable_node）：Makefile 变量与 npm 目标
+_NPM_MAKE_VARS = """\
+# npm 离线包目录 = Npm Download Action 产物 packages/ 的宿主机位置；
+# compose 以只读方式挂载到容器 {{NPM_CONTAINER_DIR}}，多个容器可共用。
+# 可在命令行覆盖：make npm-install NPM_PACKAGES_DIR=/data/packages
+NPM_PACKAGES_DIR ?= {{NPM_PACKAGES_DIR}}
+export NPM_PACKAGES_DIR
+
+"""
+
+_NPM_MAKE_TARGETS = """\
+npm-install: check-dev ## 用离线 npm 包（{{NPM_CONTAINER_DIR}}）把依赖安装到 /app
+\t$(DEV_RUN) bash -c 'set -e; \\
+\t\tls {{NPM_CONTAINER_DIR}}/*.tgz >/dev/null 2>&1 || { \\
+\t\t\techo "错误: {{NPM_CONTAINER_DIR}} 下没有 *.tgz"; \\
+\t\t\techo "请把 Npm Download Action 的 npm_packages 产物解压到项目根目录 $(NPM_PACKAGES_DIR)/"; \\
+\t\t\techo "或用 make npm-install NPM_PACKAGES_DIR=/path/to/packages 指定目录"; \\
+\t\t\texit 1; \\
+\t\t}; \\
+\t\tnpm install --offline --no-audit --no-fund {{NPM_CONTAINER_DIR}}/*.tgz'
+
+npm-version: check-dev ## 查看容器内 node / npm 版本
+\t$(DEV_RUN) bash -c 'node -v && npm -v'
+
+"""
+
+_NPM_PHONY = "npm-install npm-version "
 
 # Dockerfile.addon 中基于现有镜像的阶段（离线补装 Python 包，配合 build.sh）。
 # requirements.txt 只在含有真实包名（非选项/注释/空行）时才按清单安装，
@@ -154,6 +182,23 @@ def _base_mapping(p):
         # 用户包 + 预装组件（lucide / oracledb）的合并清单
         "PIP_PACKAGES_LINES": "\n".join(p.preinstall_pip_packages),
         "DEV_PIP_TOOLS": " ".join(p.dev_pip_tools),
+        # ---- Oracle（客户端由 compose 从宿主机挂载，镜像只装依赖与变量） ----
+        "ORACLE_ENABLED": "1" if p.enable_oracle_instantclient else "0",
+        "ORACLE_CLIENT_DIR": p.oracle_client_dir,
+        "EXTRA_VOLUMES": _extra_volumes(p),
+        "APP_ENV_BLOCK": _env_block(p),
+        # ---- Node.js / npm 前端离线开发 ----
+        "NODE_ENABLED": "1" if p.enable_node else "0",
+        "NODE_VERSION": p.node_version,
+        "NODE_STAGE": _node_stage(p),
+        "NPM_CONTAINER_DIR": NPM_PACKAGES_CONTAINER_DIR,
+        "NPM_PACKAGES_DIR": p.npm_packages_dir,
+        "NPM_REGISTRY_URL": p.npm_registry_url,
+        "NPM_GLOBAL_PACKAGES": " ".join(p.npm_package_list),
+        "NPM_MAKE_VARS": _npm_make_vars(p),
+        "NPM_MAKE_TARGETS": _npm_make_targets(p),
+        "NPM_PHONY": _NPM_PHONY if (p.enable_node and p.dev_tools_enabled) else "",
+        "NPM_CHECK": _npm_check(p),
     }
 
 
@@ -175,10 +220,108 @@ def _custom_install_block(cmd):
 
 
 def _oracle_block(p):
-    """Oracle Instant Client 19 安装块（勾选 enable_oracle_instantclient 时）。"""
+    """Oracle Instant Client 依赖/环境变量块（勾选 enable_oracle_instantclient 时）。
+
+    客户端本体不下载进镜像：只安装 libaio 等运行库并配置环境变量，客户端由
+    compose 从宿主机只读挂载到 ORACLE_CLIENT_DIR（同一服务器多容器共用）。
+    """
     if not p.enable_oracle_instantclient:
         return ""
     return _load("Dockerfile.oracle.tmpl")
+
+
+def _extra_volumes(p):
+    """app/dev 服务额外的只读挂载（Oracle 客户端、npm 离线包）。"""
+    lines = []
+    if p.oracle_client_mount:
+        lines.append(f"      - {p.oracle_client_mount}\n")
+    if p.npm_packages_mount:
+        lines.append(f"      - {p.npm_packages_mount}\n")
+    return "".join(lines)
+
+
+def _escape_dollar(value):
+    """compose 会对 $ 做变量插值；预设环境变量的值是字面量，转义为 $$。"""
+    return value.replace("$", "$$")
+
+
+def _env_map(p):
+    """app/dev 服务的 environment：Oracle 默认变量 + 预设环境变量（后者覆盖）。"""
+    env = {}
+    if p.enable_oracle_instantclient:
+        env["ORACLE_HOME"] = p.oracle_client_dir
+        env["LD_LIBRARY_PATH"] = p.oracle_client_dir
+        env["TNS_ADMIN"] = "/app"
+    for key, value in p.preset_env_pairs:
+        env[key] = value
+    return env
+
+
+def _env_block(p):
+    env = _env_map(p)
+    if not env:
+        return ""
+    lines = ["    environment:\n"]
+    for key, value in env.items():
+        lines.append(f"      {key}: {json.dumps(_escape_dollar(value))}\n")
+    return "".join(lines)
+
+
+def _node_stage(p):
+    """Node.js 构建阶段：从官方 node 镜像复制 node/npm（仅 enable_node 时）。"""
+    if not p.enable_node:
+        return ""
+    return (
+        "# ---- Node.js 构建阶段：仅用于复制 node/npm，不进入最终镜像 ----\n"
+        f"FROM --platform={p.docker_platform} node:{p.node_version}-slim-bookworm AS node\n"
+        "\n"
+    )
+
+
+def _node_block(p):
+    """Node.js 运行时 + 可选的全局 npm 包（enable_node 时）。"""
+    if not p.enable_node:
+        return ""
+    text = _sub(_load("Dockerfile.node.tmpl"), {"NODE_VERSION": p.node_version})
+    if p.npm_package_list:
+        text += (
+            "\n# 预装前端工具（构建期联网安装到全局，离线容器内可直接使用）\n"
+            f"RUN npm install -g --no-audit --no-fund --registry {p.npm_registry_url} "
+            f"{' '.join(p.npm_package_list)} \\\n"
+            "    && npm cache clean --force\n"
+        )
+    return text
+
+
+def _npm_make_vars(p):
+    if not p.enable_node:
+        return ""
+    return _sub(_NPM_MAKE_VARS, {
+        "NPM_CONTAINER_DIR": NPM_PACKAGES_CONTAINER_DIR,
+        "NPM_PACKAGES_DIR": p.npm_packages_dir,
+    })
+
+
+def _npm_make_targets(p):
+    if not (p.enable_node and p.dev_tools_enabled):
+        return ""
+    return _sub(_NPM_MAKE_TARGETS, {
+        "NPM_CONTAINER_DIR": NPM_PACKAGES_CONTAINER_DIR,
+        "NPM_PACKAGES_DIR": p.npm_packages_dir,
+    })
+
+
+def _npm_check(p):
+    if not p.enable_node:
+        return ""
+    return (
+        '\t@if ls "$(NPM_PACKAGES_DIR)"/*.tgz >/dev/null 2>&1; then \\\n'
+        '\t\techo "  OK    npm 离线包: $(NPM_PACKAGES_DIR)/*.tgz"; \\\n'
+        "\telse \\\n"
+        '\t\techo "  WARN  未发现 npm 离线包（$(NPM_PACKAGES_DIR)/*.tgz）——'
+        '需要前端离线依赖时请解压 Npm Download Action 产物"; \\\n'
+        "\tfi\n"
+    )
 
 
 def _install_block(local_wheels, req_path="requirements.txt"):
@@ -226,6 +369,7 @@ def render_dockerfile(p, local_wheels=True):
         "INSTALL_BLOCK": _install_block(local_wheels, req_path),
         "DEV_PIP_BLOCK": _dev_pip_block(p, local_wheels),
         "ORACLE_BLOCK": _oracle_block(p),
+        "NODE_BLOCK": _node_block(p),
     }
     if p.dev_image_only:
         # 仅 dev 镜像模式：单阶段 Dockerfile，产物只有一个 dev 镜像
@@ -255,7 +399,7 @@ def _app_command_block(p):
 
 
 def _app_options_block(p):
-    """app 服务的端口发布与 env_file 注入。"""
+    """app 服务的端口发布、env_file 与预设环境变量。"""
     lines = []
     if p.has_app_port:
         if p.enable_nginx:
@@ -272,6 +416,7 @@ def _app_options_block(p):
         lines.extend(
             f"      - {json.dumps(_env_file_path(x))}\n" for x in p.env_file_list
         )
+    lines.append(_env_block(p))
     return "".join(lines)
 
 
@@ -309,7 +454,11 @@ def _nginx_service(p):
 def render_compose(p):
     dev_service = ""
     if p.dev_tools_enabled:
-        dev_service = _sub(_DEV_SERVICE_TMPL, _base_mapping(p))
+        dev_service = _sub(_DEV_SERVICE_TMPL, {
+            **_base_mapping(p),
+            "DEV_EXTRA_VOLUMES": _extra_volumes(p),
+            "DEV_ENV_BLOCK": _env_block(p),
+        })
 
     services = []
     if p.enable_nginx:
@@ -346,12 +495,15 @@ def render_makefile(p):
     dev_targets = ""
     if p.dev_tools_enabled:
         dev_targets = _sub(_DEV_MAKE_TARGETS, _base_mapping(p))
+    npm_phony = _NPM_PHONY if (p.enable_node and p.dev_tools_enabled) else ""
     return _sub(
         _load("Makefile.tmpl"),
         {
             **_base_mapping(p),
             "DEV_TARGETS": dev_targets,
             "PHONY_DEV": _DEV_PHONY if p.dev_tools_enabled else "",
+            "NPM_TARGETS": _npm_make_targets(p),
+            "PHONY_NPM": npm_phony,
         },
     )
 
@@ -378,9 +530,50 @@ def render_main_py():
     return _load("main.py.tmpl")
 
 
+def _oracle_notice_block(p):
+    """install.sh 中的 Oracle 客户端配置提示（enable_oracle_instantclient 时）。"""
+    if not p.enable_oracle_instantclient:
+        return ""
+    d = p.oracle_client_dir
+    return f'''
+echo ""
+printf '%s\\n' "${{C_BOLD}}Oracle Instant Client（本包已启用；客户端不在镜像内，由 compose 从宿主机挂载）${{C_RESET}}"
+note "1. 宿主机解压 Instant Client 19 Basic 包，把其中的 instantclient_19_19 目录内容"
+note "   放到 {d}（确保 {d}/libclntsh.so.19.1 直接存在，x64/arm64 与服务器一致）"
+note "2. 客户端在其它目录时：export ORACLE_CLIENT_DIR=/your/instantclient19（make up 前设置）"
+note "   或修改项目根目录 docker-compose.yml 中 ORACLE_CLIENT_DIR 的默认值"
+note "3. 同一台服务器上的多个容器可共用该客户端（只读挂载，不复制进镜像）"
+note "4. 验证：docker compose run --rm app python -c \\"import oracledb; oracledb.init_oracle_client(); print('OCI OK')\\""
+'''
+
+
+def _npm_notice_block(p):
+    """install.sh 中的 npm 离线开发提示（enable_node 时）。"""
+    if not p.enable_node:
+        return ""
+    d = p.npm_packages_dir
+    rel = d.removeprefix("./")
+    target = d if d.startswith("/") else f"$SRC_ROOT/{rel}"
+    return f'''
+echo ""
+printf '%s\\n' "${{C_BOLD}}Node.js / npm 前端离线开发（本包已启用）${{C_RESET}}"
+note "1. 在内网用 Npm Download Action 下载依赖，得到 npm_packages 产物（顶层 packages/）"
+note "2. 解压产物后把 packages/ 放到 {target}（也可 export NPM_PACKAGES_DIR=/your/packages）"
+note "3. make npm-install    # 用 {NPM_PACKAGES_CONTAINER_DIR} 里的离线 tarball 把依赖装到 /app"
+note "4. make shell 后运行 npm run dev -- --host 0.0.0.0（vite 默认 5173，webpack 默认 8080；按需设置 app_port）"
+'''
+
+
 def render_install_sh(p, out_file):
     """渲染安装脚本到 dist/（独立 artifact，不进 src tgz）。"""
-    content = _sub(_load("install.sh.tmpl"), _base_mapping(p))
+    content = _sub(
+        _load("install.sh.tmpl"),
+        {
+            **_base_mapping(p),
+            "ORACLE_NOTICE_BLOCK": _oracle_notice_block(p),
+            "NPM_NOTICE_BLOCK": _npm_notice_block(p),
+        },
+    )
     path = Path(out_file)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
@@ -388,13 +581,218 @@ def render_install_sh(p, out_file):
     return path
 
 
+def _oracle_html_section(p):
+    if not p.enable_oracle_instantclient:
+        return ""
+    d = p.oracle_client_dir
+    return f"""
+    <section class="card">
+      <h2><span class="step-dot">06</span>Oracle Instant Client（本包已启用）</h2>
+      <p>镜像内<strong>不包含</strong> Oracle 客户端：只安装了 <code>libaio1</code> /
+      <code>libnsl2</code> 等依赖并配置 <code>ORACLE_HOME</code> /
+      <code>LD_LIBRARY_PATH</code> / <code>TNS_ADMIN</code>。客户端由 <code>docker-compose.yml</code>
+      以只读卷从宿主机挂载，同一台服务器上的多个容器共用同一份客户端。</p>
+      <p class="muted">Instant Client 19 Basic 包（官方直链目录
+      <code>https://download.oracle.com/otn_software/linux/instantclient/1919000/</code>）：
+      x64 用 <code>instantclient-basic-linux.x64-19.19.0.0.0dbru.zip</code>，
+      arm64 用 <code>instantclient-basic-linux.arm64-19.19.0.0.0dbru.zip</code>。</p>
+
+      <div class="step">
+        <div class="step-head">
+          <span class="step-badge">1</span>
+          <div>
+            <h3>宿主机准备客户端（默认路径）</h3>
+            <p>下载 Instant Client 19 Basic 包并解压，把其中的 <code>instantclient_19_19</code>
+            目录内容放到 <code>{d}</code>，确保 <code>{d}/libclntsh.so.19.1</code>
+            直接存在（x64 / arm64 需与服务器架构一致）。</p>
+          </div>
+        </div>
+        <div class="codeblock">
+          <div class="codebar"><span class="code-label">宿主机</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
+          <pre><code>ls -l {d}/libclntsh.so.19.1</code></pre>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-head">
+          <span class="step-badge">2</span>
+          <div>
+            <h3>客户端在其它目录</h3>
+            <p>无需重新构建镜像：运行 compose 前设置 <code>ORACLE_CLIENT_DIR</code>，或修改项目根目录
+            <code>docker-compose.yml</code> 中挂载的默认值。</p>
+          </div>
+        </div>
+        <div class="codeblock">
+          <div class="codebar"><span class="code-label">项目根目录</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
+          <pre><code>ORACLE_CLIENT_DIR=/data/instantclient19 make up</code></pre>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-head">
+          <span class="step-badge">3</span>
+          <div>
+            <h3>验证 OCI 可用</h3>
+            <p>输出 <code>OCI OK</code> 即 Thick 模式加载成功。</p>
+          </div>
+        </div>
+        <div class="codeblock">
+          <div class="codebar"><span class="code-label">项目根目录</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
+          <pre><code>docker compose run --rm app python -c "import oracledb; oracledb.init_oracle_client(); print('OCI OK')"</code></pre>
+        </div>
+      </div>
+
+      <div class="tip"><strong>注意：</strong>宿主机目录为空或路径不对时会报
+      <code>DPI-1047</code> 或找不到 <code>libclntsh.so</code>。挂载是只读的，升级客户端只需替换
+      宿主机目录内容后重启容器（<code>make down &amp;&amp; make up</code>）。</div>
+    </section>
+"""
+
+
+def _npm_html_section(p):
+    if not p.enable_node:
+        return ""
+    d = p.npm_packages_dir
+    step_no = "07" if p.enable_oracle_instantclient else "06"
+    return f"""
+    <section class="card">
+      <h2><span class="step-dot">{step_no}</span>前端离线开发（Node.js / npm）</h2>
+      <p>镜像内置 Node.js {p.node_version} + npm，可离线开发 vite / webpack / vue / react 项目。
+      Npm Download Action 的 <code>npm_packages</code> 产物（顶层 <code>packages/</code>）以只读卷
+      挂载到容器 <code>{NPM_PACKAGES_CONTAINER_DIR}</code>，多个容器可共用。</p>
+
+      <div class="step">
+        <div class="step-head">
+          <span class="step-badge">1</span>
+          <div>
+            <h3>准备离线 npm 包</h3>
+            <p>在内网用 <strong>Npm Download</strong> Action 下载依赖，把产物中的
+            <code>packages/</code> 放到 <code>{d}</code>（默认项目根目录下）。</p>
+          </div>
+        </div>
+        <div class="codeblock">
+          <div class="codebar"><span class="code-label">项目根目录</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
+          <pre><code>ls {d}/*.tgz</code></pre>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-head">
+          <span class="step-badge">2</span>
+          <div>
+            <h3>离线安装依赖到 /app</h3>
+            <p><code>make npm-install</code> 等价于容器内
+            <code>npm install --offline {NPM_PACKAGES_CONTAINER_DIR}/*.tgz</code>。</p>
+          </div>
+        </div>
+        <div class="codeblock">
+          <div class="codebar"><span class="code-label">项目根目录</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
+          <pre><code>make npm-install</code></pre>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-head">
+          <span class="step-badge">3</span>
+          <div>
+            <h3>启动前端开发服务器</h3>
+            <p>推荐把构建参数 <code>prod_command</code> 设为
+            <code>npm run dev -- --host 0.0.0.0</code>、<code>app_port</code> 设为前端端口
+            （vite 5173 / webpack 8080），<code>make up</code> 即带宿主机端口映射并支持热更新。</p>
+          </div>
+        </div>
+        <div class="codeblock">
+          <div class="codebar"><span class="code-label">项目根目录</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
+          <pre><code>make up</code></pre>
+        </div>
+        <div class="codeblock">
+          <div class="codebar"><span class="code-label">项目根目录 · 临时调试</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
+          <pre><code>docker compose run --rm -p 5173:5173 dev npm run dev -- --host 0.0.0.0</code></pre>
+        </div>
+      </div>
+
+      <div class="tip"><strong>自定义目录：</strong>离线包不在项目根时，用
+      <code>export NPM_PACKAGES_DIR=/data/packages</code> 或
+      <code>make npm-install NPM_PACKAGES_DIR=/data/packages</code> 覆盖挂载源，无需改 compose。</div>
+    </section>
+"""
+
+
 def render_readme_html(p, out_file):
     """渲染 bundle 安装说明 readme.html 到 dist/（随 install.sh 等一起进 Artifact zip）。"""
-    content = _sub(_load("readme.html.tmpl"), _base_mapping(p))
+    content = _sub(
+        _load("readme.html.tmpl"),
+        {
+            **_base_mapping(p),
+            "ORACLE_SECTION": _oracle_html_section(p),
+            "NPM_SECTION": _npm_html_section(p),
+        },
+    )
     path = Path(out_file)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     return path
+
+
+def _oracle_readme_section(p):
+    if not p.enable_oracle_instantclient:
+        return ""
+    d = p.oracle_client_dir
+    return f"""
+## Oracle Instant Client（客户端由宿主机挂载，不在镜像内）
+
+镜像只安装了 `libaio1` / `libnsl2` 运行依赖，并设置 `ORACLE_HOME` /
+`LD_LIBRARY_PATH` / `TNS_ADMIN`；客户端本体由 compose 从宿主机只读挂载，
+同一台服务器上的多个容器共用同一份客户端。
+
+1. 在宿主机解压 Instant Client 19 Basic 包，把其中的 `instantclient_19_19`
+   目录内容放到 `{d}`，确保 `{d}/libclntsh.so.19.1` 直接存在
+   （x64 / arm64 与服务器一致）。
+   官方直链目录 `https://download.oracle.com/otn_software/linux/instantclient/1919000/`：
+   x64 用 `instantclient-basic-linux.x64-19.19.0.0.0dbru.zip`，arm64 用
+   `instantclient-basic-linux.arm64-19.19.0.0.0dbru.zip`。
+2. 客户端在其它目录时：
+   ```bash
+   export ORACLE_CLIENT_DIR=/data/instantclient19
+   make up
+   ```
+   对应 compose 挂载：
+   `${{ORACLE_CLIENT_DIR:-{d}}}:{d}:ro`；也可直接修改项目根
+   `docker-compose.yml` 中的默认值。
+3. 验证：
+   ```bash
+   docker compose run --rm app python -c "import oracledb; oracledb.init_oracle_client(); print('OCI OK')"
+   ```
+   若报 `DPI-1047` / `libclntsh.so` 找不到，说明宿主机目录为空或路径不对。
+"""
+
+
+def _npm_readme_section(p):
+    if not p.enable_node:
+        return ""
+    d = p.npm_packages_dir
+    return f"""
+## 前端离线开发（Node.js / npm）
+
+镜像内置 Node.js {p.node_version} + npm；Npm Download Action 的 `npm_packages`
+产物（顶层 `packages/`）以只读卷挂载到容器 `{NPM_PACKAGES_CONTAINER_DIR}`。
+
+1. 在内网用 Npm Download Action 下载依赖（见 `docs/npm-offline-package-guide.md`），
+   把产物中的 `packages/` 放到 `{d}`（默认项目根目录下）。
+2. 安装依赖到 `/app`：
+   ```bash
+   make npm-install
+   ```
+   等价于容器内 `npm install --offline {NPM_PACKAGES_CONTAINER_DIR}/*.tgz`。
+3. 开发调试（二选一）：
+   - 推荐：构建参数 `prod_command` 设为 `npm run dev -- --host 0.0.0.0`，
+     `app_port` 设为前端端口（vite 5173 / webpack 8080），`make up` 即带
+     宿主机端口映射；源码经 `/app` 挂载，支持热更新；
+   - 临时：`docker compose run --rm -p 5173:5173 dev npm run dev -- --host 0.0.0.0`
+     （`make shell` 进入容器手动启动时需要自行发布端口）。
+4. 离线包目录不在项目根时：`export NPM_PACKAGES_DIR=/data/packages`，或
+   `make npm-install NPM_PACKAGES_DIR=/data/packages`。
+"""
 
 
 def render_src_readme(p):
@@ -425,6 +823,19 @@ def render_src_readme(p):
     else:
         dev_note = "- 本次未构建 dev 镜像，`make shell / lint / compile / test` 目标不可用。"
 
+    if p.enable_oracle_instantclient:
+        oracle_summary = (
+            f"已启用（客户端由 compose 从宿主机只读挂载到 `{p.oracle_client_dir}`）"
+        )
+    else:
+        oracle_summary = "未启用"
+    if p.enable_node:
+        node_summary = f"Node.js {p.node_version} + npm"
+        if p.npm_package_list:
+            node_summary += f"（全局预装：{', '.join(p.npm_package_list)}）"
+    else:
+        node_summary = "未启用"
+
     return _sub(
         _load("README.src.tmpl"),
         {
@@ -432,6 +843,10 @@ def render_src_readme(p):
             "IMAGE_SUMMARY": image_summary,
             "SERVICES_SUMMARY": services_summary,
             "DEV_TOOLS_NOTE": dev_note,
+            "ORACLE_SUMMARY": oracle_summary,
+            "NODE_SUMMARY": node_summary,
+            "ORACLE_SECTION": _oracle_readme_section(p),
+            "NPM_SECTION": _npm_readme_section(p),
         },
     )
 

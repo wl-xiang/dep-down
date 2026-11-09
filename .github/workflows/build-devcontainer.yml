@@ -58,10 +58,58 @@ on:
         required: true
         default: false
       enable_oracle_instantclient:
-        description: 'Preinstall Oracle Instant Client 19 + oracledb 2.5.1 (thick mode, for Oracle 11g db)'
+        description: 'Install Oracle Instant Client runtime deps (libaio) + env vars; the client itself is bind-mounted from the host at /opt/oracle/instantclient19 by docker-compose (shared by all containers)'
         type: boolean
         required: true
         default: false
+      preset_envs:
+        description: 'Preset env vars injected into app/dev services, multiple separated by 》》 (e.g. DB_HOST=10.0.0.1》》DB_PORT=1521)'
+        type: string
+        required: false
+        default: ''
+      enable_node:
+        description: 'Install Node.js + npm into the image for offline frontend development (vite/webpack/vue/react)'
+        type: boolean
+        required: true
+        default: false
+      node_version:
+        description: 'Node.js version (use the same value in the Npm Download workflow)'
+        type: choice
+        required: true
+        default: '20'
+        options:
+          - '18'
+          - '20'
+          - '22'
+          - '24'
+      npm_packages:
+        description: 'npm packages installed globally at build time, separated by $ (e.g. vite$webpack$webpack-cli$vue$react). Requires enable_node.'
+        type: string
+        required: false
+        default: ''
+      npm_registry:
+        description: 'npm registry mirror used for build-time npm installs'
+        type: choice
+        required: true
+        default: 'npmmirror (taobao)'
+        options:
+          - 'npmmirror (taobao)'
+          - 'Tencent'
+          - 'Huawei'
+          - 'THU (tuna)'
+          - 'USTC'
+          - 'Official (npmjs.org)'
+          - 'Other (custom URL)'
+      npm_custom_registry_url:
+        description: 'Custom npm registry URL (used only when npm_registry is "Other (custom URL)")'
+        type: string
+        required: false
+        default: ''
+      npm_packages_dir:
+        description: 'Host dir mounted read-only at /opt/npm-packages (the Npm Download artifact packages/ folder); relative to project root or absolute'
+        type: string
+        required: true
+        default: 'packages'
       enable_nginx:
         description: 'Enable nginx sidecar service (8080:80)'
         type: boolean
@@ -176,6 +224,13 @@ jobs:
           CUSTOM_INSTALL_CMD: ${{ inputs.custom_install_cmd }}
           ENABLE_LUCIDE: ${{ inputs.enable_lucide }}
           ENABLE_ORACLE_INSTANTCLIENT: ${{ inputs.enable_oracle_instantclient }}
+          PRESET_ENVS: ${{ inputs.preset_envs }}
+          ENABLE_NODE: ${{ inputs.enable_node }}
+          NODE_VERSION: ${{ inputs.node_version }}
+          NPM_PACKAGES: ${{ inputs.npm_packages }}
+          NPM_REGISTRY: ${{ inputs.npm_registry }}
+          NPM_CUSTOM_REGISTRY_URL: ${{ inputs.npm_custom_registry_url }}
+          NPM_PACKAGES_DIR: ${{ inputs.npm_packages_dir }}
           ENABLE_NGINX: ${{ inputs.enable_nginx }}
           ENABLE_POSTGRES: ${{ inputs.enable_postgres }}
           APP_DEPENDS_ON_NGINX: ${{ inputs.app_depends_on_nginx }}
@@ -311,6 +366,57 @@ jobs:
             exit 1
           fi
           sha256sum "${{ steps.build.outputs.images_tgz }}"
+
+      # Oracle / 前端（Node/npm）参数联动校验：确保生成物真的按参数接线
+      - name: Verify oracle / npm wiring
+        env:
+          ORACLE_ENABLED: ${{ inputs.enable_oracle_instantclient }}
+          NODE_ENABLED: ${{ inputs.enable_node }}
+          DEV_ENABLED: ${{ inputs.build_dev_image || inputs.dev_image_only }}
+          SRC_TGZ: ${{ steps.build.outputs.src_tgz }}
+          INSTALL_SH: ${{ steps.build.outputs.install_sh }}
+          README_HTML: ${{ steps.build.outputs.readme_html }}
+        run: |
+          set -euo pipefail
+          tar xzf "$SRC_TGZ" -O devcontainer-src/docker-compose.yml.tpl > /tmp/compose.tpl
+          tar xzf "$SRC_TGZ" -O devcontainer-src/Dockerfile > /tmp/Dockerfile
+          tar xzf "$SRC_TGZ" -O devcontainer-src/Makefile > /tmp/Makefile
+
+          if [ "$ORACLE_ENABLED" = "true" ]; then
+            grep -q 'ORACLE_CLIENT_DIR:-/opt/oracle/instantclient19' /tmp/compose.tpl \
+              || { echo "::error::compose 模板缺少 Oracle 客户端挂载"; exit 1; }
+            grep -q 'ORACLE_HOME' /tmp/compose.tpl \
+              || { echo "::error::compose 模板缺少 Oracle 环境变量"; exit 1; }
+            grep -q 'ORACLE_HOME=/opt/oracle/instantclient19' /tmp/Dockerfile \
+              || { echo "::error::Dockerfile 缺少 Oracle 环境变量"; exit 1; }
+            if grep -q 'instantclient-basic' /tmp/Dockerfile; then
+              echo "::error::Oracle 客户端不应下载进镜像（应由 compose 挂载）"
+              exit 1
+            fi
+            grep -q 'ORACLE_CLIENT_DIR' "$INSTALL_SH" \
+              || { echo "::error::install.sh 缺少 Oracle 配置提示"; exit 1; }
+            grep -q 'ORACLE_CLIENT_DIR' "$README_HTML" \
+              || { echo "::error::readme.html 缺少 Oracle 配置提示"; exit 1; }
+            echo "oracle wiring OK"
+          fi
+
+          if [ "$NODE_ENABLED" = "true" ]; then
+            grep -q 'COPY --from=node' /tmp/Dockerfile \
+              || { echo "::error::Dockerfile 缺少 Node.js 安装层"; exit 1; }
+            grep -q 'NPM_PACKAGES_DIR:-' /tmp/compose.tpl \
+              || { echo "::error::compose 模板缺少 npm 离线包挂载"; exit 1; }
+            grep -q '/opt/npm-packages' /tmp/compose.tpl \
+              || { echo "::error::compose 模板缺少 /opt/npm-packages 挂载点"; exit 1; }
+            grep -q 'NPM_PACKAGES_DIR' "$INSTALL_SH" \
+              || { echo "::error::install.sh 缺少 npm 离线包提示"; exit 1; }
+            grep -q '/opt/npm-packages' "$README_HTML" \
+              || { echo "::error::readme.html 缺少 npm 离线包提示"; exit 1; }
+            if [ "$DEV_ENABLED" = "true" ]; then
+              grep -q 'npm-install' /tmp/Makefile \
+                || { echo "::error::Makefile 缺少 npm-install 目标"; exit 1; }
+            fi
+            echo "npm wiring OK"
+          fi
 
       # 安装脚本：构建时已 chmod 755，此处显式再确认一次
       # （注：artifact zip 解压后可能丢失 +x，文档统一引导用户 bash install.sh 调用）

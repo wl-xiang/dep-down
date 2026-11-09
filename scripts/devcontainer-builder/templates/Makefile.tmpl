@@ -18,7 +18,7 @@ HOST_UID ?= $(shell id -u)
 HOST_GID ?= $(shell id -g)
 export HOST_UID HOST_GID
 
-.DEFAULT_GOAL := help
+{{NPM_MAKE_VARS}}.DEFAULT_GOAL := help
 
 # 注意：目标的说明必须写在 "## "（双井号+空格）之后，才会出现在 make help 中
 help: ## 显示所有可用目标
@@ -39,7 +39,7 @@ check: ## 离线自检：compose 文件、镜像是否已导入、容器架构�
 		fi; \
 	done; \
 	if [ "$$failed" = "1" ]; then echo "== 自检失败 =="; exit 1; fi
-	@echo "== 自检通过 =="
+{{NPM_CHECK}}	@echo "== 自检通过 =="
 
 build: ## 构建镜像（需联网访问 apt/pip 源；离线机器请改用镜像归档 + make up）
 	@echo "!!! make build 需要外网，离线环境请勿执行；请改用 docker load + make up !!!"
@@ -57,10 +57,10 @@ ps: ## 查看容器状态
 logs: ## 跟随查看日志
 	$(COMPOSE) logs -f
 
-{{DEV_TARGETS}}package-src: ## 重新打包 docs/devcontainer 为 tgz（输出到 dist/，可配 install.sh 再次安装）
+{{DEV_TARGETS}}{{NPM_TARGETS}}package-src: ## 重新打包 docs/devcontainer 为 tgz（输出到 dist/，可配 install.sh 再次安装）
 	mkdir -p dist
 	tar czf dist/devcontainer-src-repack_$$(date +%Y%m%d-%H%M%S).tgz \
 		--exclude='*.tgz' --exclude='__pycache__' --exclude='.pytest_cache' \
 		-C docs/devcontainer .
 
-.PHONY: help check build up down ps logs {{PHONY_DEV}}package-src
+.PHONY: help check build up down ps logs {{PHONY_DEV}}{{PHONY_NPM}}package-src

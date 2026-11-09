@@ -44,7 +44,28 @@ def build_markdown(p, results):
     out.append(f"| pip 镜像源 | `{p.pip_mirror}` ({p.mirror_url}) |")
     out.append(f"| wheels 数量 | {wheels_count} |")
     out.append(f"| 预装 lucide 图标库 (pip) | {_yes_no(p.enable_lucide)} |")
-    out.append(f"| 预装 Oracle Instant Client 19 | {_yes_no(p.enable_oracle_instantclient)} |")
+    if p.enable_oracle_instantclient:
+        oracle_mode = (
+            f"启用（客户端不在镜像内，由 compose 从宿主机只读挂载到 "
+            f"`{p.oracle_client_dir}`）"
+        )
+    else:
+        oracle_mode = "未启用"
+    out.append(f"| Oracle Instant Client 19 | {oracle_mode} |")
+    if p.enable_node:
+        node_mode = f"Node.js {p.node_version} + npm"
+    else:
+        node_mode = "未启用"
+    out.append(f"| Node.js / npm | {node_mode} |")
+    if p.enable_node:
+        npm_pkg_summary = ", ".join(f"`{x}`" for x in p.npm_package_list) or "(无)"
+        out.append(f"| npm 全局预装包 | {npm_pkg_summary} |")
+        out.append(
+            f"| npm 离线包目录 | `${{NPM_PACKAGES_DIR:-{p.npm_packages_dir}}}`"
+            " → `/opt/npm-packages`（只读挂载） |"
+        )
+    env_summary = ", ".join(f"`{k}`" for k, _v in p.preset_env_pairs) or "(无)"
+    out.append(f"| 预设环境变量 (app/dev) | {env_summary} |")
     if p.dev_image_only:
         image_mode = "仅 dev 镜像（部署与开发共用，镜像归档只含该镜像）"
     elif p.build_dev_image:
@@ -208,6 +229,43 @@ def build_markdown(p, results):
         else:
             out.append("未指定 app_port，nginx 未生成反代配置，需自行挂载 "
                        "`nginx/conf.d/default.conf`。")
+        out.append("")
+    if p.enable_oracle_instantclient:
+        out.append("### Oracle Instant Client（客户端由宿主机挂载）")
+        out.append("")
+        out.append("镜像内**不包含**客户端，仅安装 `libaio1` / `libnsl2` 并配置"
+                   " `ORACLE_HOME` / `LD_LIBRARY_PATH` / `TNS_ADMIN`；客户端由"
+                   " compose 只读挂载，同一服务器的多个容器共用一份：")
+        out.append("")
+        out.append("```bash")
+        out.append(f"# 1. 宿主机准备 Instant Client 19 Basic 包，解压到 {p.oracle_client_dir}")
+        out.append(f"ls -l {p.oracle_client_dir}/libclntsh.so.19.1")
+        out.append("# 2. 非默认目录时（无需重建镜像）")
+        out.append("export ORACLE_CLIENT_DIR=/data/instantclient19   # make up 前设置")
+        out.append("make up")
+        out.append("# 3. 验证 Thick 模式加载成功（输出 OCI OK）")
+        out.append('docker compose run --rm app python -c "import oracledb; '
+                   "oracledb.init_oracle_client(); print('OCI OK')\"")
+        out.append("```")
+        out.append("")
+    if p.enable_node:
+        out.append("### 前端离线开发（Node.js / npm）")
+        out.append("")
+        out.append(f"镜像内置 Node.js {p.node_version} + npm；Npm Download Action 的"
+                   " `npm_packages` 产物（顶层 `packages/`）由 compose 只读挂载到"
+                   " `/opt/npm-packages`：")
+        out.append("")
+        out.append("```bash")
+        out.append(f"# 1. 把 Npm Download 产物的 packages/ 放到项目根 {p.npm_packages_dir}/")
+        out.append("ls packages/*.tgz")
+        out.append("# 2. 离线安装依赖到 /app")
+        out.append("make npm-install")
+        out.append("# 3. 启动前端开发服务器：把 prod_command 设为 npm run dev -- --host 0.0.0.0、")
+        out.append("#    app_port 设为 5173（vite）/ 8080（webpack）后 make up；临时调试可用：")
+        out.append("#    docker compose run --rm -p 5173:5173 dev npm run dev -- --host 0.0.0.0")
+        out.append("```")
+        out.append("")
+        out.append(f"离线包目录可用 `NPM_PACKAGES_DIR` 覆盖（默认 `{p.npm_packages_dir}`）。")
         out.append("")
     out.append("> 完整手册见仓库 `docs/offline-devcontainer.md`。")
     out.append("")

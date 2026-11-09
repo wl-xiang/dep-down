@@ -70,7 +70,14 @@ make up (python main.py)
 | `apt_packages` | string | 空格分隔，如 `git vim curl` | 空 | 镜像内安装的 APT 工具 |
 | `custom_install_cmd` | string | shell 命令 | 空 | 个性化安装命令，在镜像内 `RUN` 执行 |
 | `enable_lucide` | boolean | — | `false` | 预装 lucide（SVG 图标库，Django/Jinja 模板渲染 lucide.dev 图标，pip 纯 Python 包） |
-| `enable_oracle_instantclient` | boolean | — | `false` | 预装 Oracle Instant Client 19（x64/arm64 19.19，Thick 模式连 Oracle 11.2）并随装 `oracledb==2.5.1`（生产验证过的版本锁定） |
+| `enable_oracle_instantclient` | boolean | — | `false` | 安装 Oracle Instant Client 的运行依赖（`libaio1`/`libnsl2`）+ `oracledb==2.5.1` + 环境变量；**客户端本体不打进镜像**，由 compose 从宿主机只读挂载到 `/opt/oracle/instantclient19`（多容器共用，见「Oracle Instant Client」） |
+| `preset_envs` | string | 用 `》》` 分隔，如 `DB_HOST=10.0.0.1》》DB_PORT=1521` | 空 | 预设环境变量，注入 app 与 dev 服务（同名值覆盖 Oracle 默认变量；值按字面量处理，`$` 无需转义） |
+| `enable_node` | boolean | — | `false` | 镜像内置 Node.js + npm，用于前端离线开发（vite / webpack / vue / react） |
+| `node_version` | choice | `18` / `20` / `22` / `24` | `20` | Node.js 版本（与 Npm Download 工作流保持一致） |
+| `npm_packages` | string | 用 `$` 分隔，如 `vite$webpack$webpack-cli$vue$react` | 空 | 构建期全局安装的 npm 包（需要 `enable_node=true`；构建机联网安装，内网容器可直接使用） |
+| `npm_registry` | choice | 与 Npm Download 相同 | `npmmirror (taobao)` | 构建期安装 npm 包使用的镜像源 |
+| `npm_custom_registry_url` | string | URL | 空 | 仅当 `npm_registry=Other (custom URL)` 时必填 |
+| `npm_packages_dir` | string | 相对/绝对路径 | `packages` | Npm Download 产物（顶层 `packages/`）在宿主机的位置，只读挂载到容器 `/opt/npm-packages`（需 `enable_node=true`） |
 | `enable_nginx` | boolean | — | `false` | 启用 nginx 外挂服务（8080:80） |
 | `enable_postgres` | boolean | — | `false` | 启用 postgres 外挂服务（postgres:16，数据卷 pgdata） |
 | `app_depends_on_nginx` | boolean | — | `false` | app 服务 `depends_on` nginx（需先启用 nginx） |
@@ -99,6 +106,10 @@ make up (python main.py)
 - `prod_command` 无法解析为命令
 - `app_port` 不是 1-65535 的整数
 - `app_source_dir` / `env_file` 使用 `~`（不会展开，请写绝对路径或相对路径）
+- `preset_envs` 不是 `KEY=VALUE` 形式、变量名非法或重复
+- `npm_packages` 非空但 `enable_node=false`；npm 包名非法（仅 `name` / `@scope/name`，可带 `@版本`）
+- `npm_registry=Other (custom URL)` 但 `npm_custom_registry_url` 为空或不是合法 URL
+- `npm_packages_dir` 含空白、`:`、`~` 等非法字符（仅允许字母/数字/`.`/`_`/`-`/`/`）
 
 ## 产物说明
 
@@ -145,7 +156,9 @@ devcontainer-src/
 src 包内**只有 `docker-compose.yml.tpl` 模板，不包含渲染后的
 `docker-compose.yaml`**；模板中的 `${SRC_ROOT:-./}` 与 `${SRC_ROOT_NAME:-app}`
 两个环境变量由 docker compose 在运行时以 `:-` 默认值语法解析（默认
-`./` = 项目根目录、项目名后缀 `app`）。
+`./` = 项目根目录、项目名后缀 `app`）。启用 Oracle / Node 时模板还会内置
+`${ORACLE_CLIENT_DIR:-/opt/oracle/instantclient19}` 与
+`${NPM_PACKAGES_DIR:-./packages}` 两个只读挂载，同样可在运行时用环境变量覆盖。
 
 `wheels/` 不再随源码包分发：所有 wheel 已在镜像构建阶段安装（云端构建经
 BuildKit bind mount 参与，不落入任何镜像层），运行容器内没有 wheels；
@@ -305,6 +318,74 @@ make up && make logs
   postgres 用 `service_healthy`（等待健康检查通过，避免启动期连接被拒）。
 - 所有服务均设置 `restart: unless-stopped` 与 `pull_policy: never`，离线环境
   不会尝试拉取镜像。
+
+## Oracle Instant Client（客户端由宿主机挂载）
+
+勾选 `enable_oracle_instantclient` 后：
+
+- 镜像内**只安装运行依赖**（`libaio1`、`libnsl2`）+ `oracledb==2.5.1`，
+  并配置环境变量：
+  `ORACLE_HOME=/opt/oracle/instantclient19`、
+  `LD_LIBRARY_PATH=/opt/oracle/instantclient19`、`TNS_ADMIN=/app`、
+  `PATH` 追加客户端目录。
+- 客户端本体不下载、不打进镜像，而是由 `docker-compose.yml` 内置只读挂载：
+  `${ORACLE_CLIENT_DIR:-/opt/oracle/instantclient19}:/opt/oracle/instantclient19:ro`
+  ——同一台服务器上的多个容器共用同一份客户端，镜像体积也不再包含客户端。
+- 内网准备步骤：
+  1. 下载 Instant Client 19 Basic 包（x64 / arm64 与服务器一致）并解压，把
+     其中的 `instantclient_19_19` 目录内容放到 `/opt/oracle/instantclient19`，
+     确保 `/opt/oracle/instantclient19/libclntsh.so.19.1` 直接存在；
+     官方直链目录
+     `https://download.oracle.com/otn_software/linux/instantclient/1919000/`
+     （x64：`instantclient-basic-linux.x64-19.19.0.0.0dbru.zip`，
+     arm64：`instantclient-basic-linux.arm64-19.19.0.0.0dbru.zip`）；
+  2. 客户端在其它目录（例如解压后就在 `/opt/oracle/instantclient_19_19`）：
+     `export ORACLE_CLIENT_DIR=/opt/oracle/instantclient_19_19` 后再
+     `make up`（无需重新构建镜像），或修改项目根 `docker-compose.yml` 中的
+     默认值；
+  3. 验证 Thick 模式加载：
+     ```bash
+     docker compose run --rm app python -c "import oracledb; oracledb.init_oracle_client(); print('OCI OK')"
+     ```
+     输出 `OCI OK` 即成功；报 `DPI-1047` / 找不到 `libclntsh.so` 说明宿主机
+     目录为空或路径不对。
+- `install.sh` 安装结束与 bundle 的 `readme.html` 都会打印以上提示。
+- 挂载是只读的：升级客户端只需替换宿主机目录内容，再
+  `make down && make up` 重启容器。
+
+## 前端离线开发（Node.js / npm）
+
+勾选 `enable_node` 后，镜像内置指定版本的 Node.js + npm（从官方
+`node:<版本>-slim-bookworm` 镜像复制，运行期无需联网），用于
+vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download** 工作流
+（仓库 `.github/workflows/npm_download.yml`）的集成方式：
+
+1. 外网：运行 **Npm Download** 工作流，得到 `npm_packages` 产物（顶层
+   `packages/`，含全部依赖的 `.tgz` 与离线安装清单）。
+2. 内网：把产物中的 `packages/` 放到构建参数 `npm_packages_dir` 指定的目录
+   （默认项目根目录 `packages/`）。`install.sh` 会提前创建该目录；compose 以
+   只读卷挂载到容器 `/opt/npm-packages`：
+   `${NPM_PACKAGES_DIR:-./packages}:/opt/npm-packages:ro`。
+3. 离线安装依赖到 `/app`（项目根目录执行）：
+   ```bash
+   make npm-install
+   # 等价于容器内：npm install --offline /opt/npm-packages/*.tgz
+   ```
+4. 开发调试（二选一）：
+   - 推荐：构建参数 `prod_command` 设为 `npm run dev -- --host 0.0.0.0`，
+     `app_port` 设为前端端口（vite 5173 / webpack 8080），`make up` 即带
+     宿主机端口映射；源码经 `/app` 挂载，支持热更新；
+   - 临时：在项目根执行
+     `docker compose run --rm -p 5173:5173 dev npm run dev -- --host 0.0.0.0`
+     （`make shell` 进入容器手动启动时需自行发布端口）。
+- 离线包目录不在项目根时：`export NPM_PACKAGES_DIR=/data/packages`，或
+  `make npm-install NPM_PACKAGES_DIR=/data/packages`（Makefile 已导出该变量，
+  compose 会自动使用）。
+- `npm_packages`（`$` 分隔，如 `vite$webpack$webpack-cli$vue$react`）会在
+  构建期以 `npm_registry` 指定的镜像源全局安装，内网容器内可直接使用这些
+  CLI（如 `vite --version`）；`make check` 会检查离线包目录是否存在 `.tgz`。
+- `make npm-install` 需要 dev 镜像（`build_dev_image=true` 或
+  `dev_image_only=true`），与 `make shell` 一致。
 
 ## 设计说明
 
@@ -496,6 +577,18 @@ docs/devcontainer/ 内）。
 镜像归档含 prod+dev（或仅 dev）+外挂服务镜像，几百 MB 到 1GB+ 属正常。勾选
 `dev_image_only` 可少打一个 prod 镜像；后续可引入分层/增量导出方案优化；
 Summary 中记录了每次产物大小作为基线。
+
+**Q: 镜像里没有 Oracle Instant Client，容器报 `DPI-1047`？**
+客户端按设计不进镜像：确认宿主机已把 Instant Client 19 解压到
+`/opt/oracle/instantclient19`（或设置 `ORACLE_CLIENT_DIR` 指向实际目录），并确认
+`libclntsh.so.19.1` 存在、架构与服务器一致。`docker compose config` 可查看实际
+挂载路径。验证命令见「Oracle Instant Client」一节。
+
+**Q: 前端项目怎么离线 `npm install` / 启动 vite / webpack？**
+构建时勾选 `enable_node`，把 Npm Download 产物 `packages/` 放到项目根目录
+（或 `npm_packages_dir` 指定的目录），在项目根执行 `make npm-install`
+（等价于 `npm install --offline /opt/npm-packages/*.tgz`），再 `make shell` 后
+`npm run dev -- --host 0.0.0.0`。镜像内已内置 Node.js/npm，无需联网。
 
 **Q: 内网 Docker / Compose 版本较老？**
 建议 Docker >= 20.10（23+ 更稳妥，兼容 containerd image store 导出的归档）、

@@ -1,31 +1,17 @@
 # ---- Oracle Instant Client 19（连接 Oracle 11.2 需 Thick 模式）----
-# 参考生产验证实现 https://github.com/wl-xiang/oracle2excel 的 Dockerfile：
+# 客户端本体**不打进镜像**（减小镜像体积）：这里只安装运行依赖并配置环境
+# 变量；Instant Client 由 docker-compose.yml 以只读卷的方式从宿主机挂载到
+# /opt/oracle/instantclient19（可用 ORACLE_CLIENT_DIR 覆盖宿主机目录），
+# 同一台服务器上的多个容器共用同一份客户端。
 # - libaio1 仅存在于 bookworm（trixie 已更名 libaio1t64，装了会 exit 100）；
 #   本镜像基础层固定 python:slim-bookworm，天然规避该坑。
-# - Instant Client 19c 兼容 Oracle 11.2，官方公开直链无需登录/许可确认，
-#   x64/arm64 均有 19.19 版本且解压目录名一致（instantclient_19_19）。
-# - 下载后校验 libclntsh.so 的 ELF 机器类型与目标架构一致（62=x86-64，
-#   183=aarch64），防止架构错配静默通过构建。
+# - libnsl2 供 Oracle 11.2 客户端使用。
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        libaio1 libnsl2 wget unzip \
+        libaio1 libnsl2 \
     && rm -rf /var/lib/apt/lists/*
 
-ARG TARGETARCH
-RUN mkdir -p /opt/oracle \
-    && ARCH="${TARGETARCH:-$(uname -m | sed -e 's/^x86_64$/amd64/' -e 's/^aarch64$/arm64/')}" \
-    && case "$ARCH" in \
-        amd64) IC_URL="https://download.oracle.com/otn_software/linux/instantclient/1919000/instantclient-basic-linux.x64-19.19.0.0.0dbru.zip" ;; \
-        arm64) IC_URL="https://download.oracle.com/otn_software/linux/instantclient/1919000/instantclient-basic-linux.arm64-19.19.0.0.0dbru.zip" ;; \
-        *) echo "[错误] 不支持的目标架构: $ARCH" >&2; exit 1 ;; \
-    esac \
-    && wget -q --timeout=60 "$IC_URL" -O /tmp/instantclient.zip \
-    && unzip -q /tmp/instantclient.zip -d /opt/oracle \
-    && rm -f /tmp/instantclient.zip \
-    && ls /opt/oracle/instantclient_19_19/libclntsh.so.19.1 \
-    && python -c "import sys; d=open('/opt/oracle/instantclient_19_19/libclntsh.so.19.1','rb').read(20); exp={'amd64':62,'arm64':183}[sys.argv[1]]; assert int.from_bytes(d[18:20],'little')==exp, 'Instant Client ELF 架构与目标平台不一致'" "$ARCH"
-
-ENV ORACLE_HOME=/opt/oracle/instantclient_19_19 \
-    LD_LIBRARY_PATH=/opt/oracle/instantclient_19_19 \
+ENV ORACLE_HOME=/opt/oracle/instantclient19 \
+    LD_LIBRARY_PATH=/opt/oracle/instantclient19 \
     TNS_ADMIN=/app \
-    PATH=/opt/oracle/instantclient_19_19:$PATH
+    PATH=/opt/oracle/instantclient19:$PATH

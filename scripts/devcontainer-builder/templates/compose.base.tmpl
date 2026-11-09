@@ -1,10 +1,14 @@
 # 由 scripts/devcontainer-builder 生成，请勿手工编辑。
 # 平台: {{DOCKER_PLATFORM}} | 镜像 TAG: {{TAG}}（时间戳: {{TS}}）
 # 本模板由 install.sh 原样复制到项目根目录为 docker-compose.yml（去掉 .tpl 后缀）。
-# 模板内两个环境变量由 docker compose 在运行时解析（冒号杠默认值语法），
+# 模板内环境变量由 docker compose 在运行时解析（冒号杠默认值语法），
 # 可用环境变量覆盖：
 #   ${SRC_ROOT:-./}       -> 应用根目录，默认 ./ = docker-compose.yml 所在的项目根目录
 #   ${SRC_ROOT_NAME:-app} -> compose 项目名后缀，默认 app
+#   ${ORACLE_CLIENT_DIR:-/opt/oracle/instantclient19}
+#                         -> Oracle Instant Client 宿主机目录（启用时）
+#   ${NPM_PACKAGES_DIR:-./packages}
+#                         -> Npm Download 产物目录（启用 Node 时）
 # 离线使用：镜像已由 devcontainer-docker-images_{{TS}}.tgz 导入，
 # pull_policy=never + make up --no-build 不会触发任何联网。
 name: {{IMAGE_PREFIX}}-${SRC_ROOT_NAME:-app}
@@ -23,7 +27,7 @@ services:
     user: "${HOST_UID:-0}:${HOST_GID:-0}"
     volumes:
       - {{APP_VOLUME}}
-    networks:
+{{EXTRA_VOLUMES}}    networks:
       - app-net
 {{APP_COMMAND_BLOCK}}{{APP_OPTIONS_BLOCK}}{{DEPENDS_ON_BLOCK}}{{DEV_SERVICE_BLOCK}}{{SERVICE_BLOCKS}}
 networks:
