@@ -88,63 +88,39 @@ on:
         required: false
         default: ''
       npm_registry:
-        description: 'npm registry mirror used for build-time npm installs'
-        type: choice
+        description: 'npm registry mirror: npmmirror (taobao) | Tencent | Huawei | THU (tuna) | USTC | Official (npmjs.org), or a custom URL starting with http(s)://'
+        type: string
         required: true
         default: 'npmmirror (taobao)'
-        options:
-          - 'npmmirror (taobao)'
-          - 'Tencent'
-          - 'Huawei'
-          - 'THU (tuna)'
-          - 'USTC'
-          - 'Official (npmjs.org)'
-          - 'Other (custom URL)'
-      npm_custom_registry_url:
-        description: 'Custom npm registry URL (used only when npm_registry is "Other (custom URL)")'
-        type: string
-        required: false
-        default: ''
       npm_packages_dir:
         description: 'Host dir mounted read-only at /opt/npm-packages (the Npm Download artifact packages/ folder); relative to project root or absolute'
         type: string
         required: true
         default: 'packages'
-      enable_nginx:
-        description: 'Enable nginx sidecar service (8080:80)'
-        type: boolean
-        required: true
-        default: false
-      enable_postgres:
-        description: 'Enable postgres sidecar service (postgres:16)'
-        type: boolean
-        required: true
-        default: false
-      app_depends_on_nginx:
-        description: 'app service depends_on nginx (requires enable_nginx)'
-        type: boolean
-        required: true
-        default: false
-      app_depends_on_postgres:
-        description: 'app service depends_on postgres (requires enable_postgres)'
-        type: boolean
-        required: true
-        default: false
+      sidecars:
+        description: 'Sidecar services to enable: nginx (8080:80) and/or postgres (postgres:16), separated by comma/space. Empty = none.'
+        type: string
+        required: false
+        default: ''
+      app_depends_on:
+        description: 'Sidecar services the app waits for: nginx and/or postgres, separated by comma/space. Requires the matching sidecar.'
+        type: string
+        required: false
+        default: ''
       prod_command:
         description: 'Command run by the prod service'
         type: string
         required: true
         default: 'python main.py'
-      build_dev_image:
-        description: 'Also build the dev image (ruff/pytest/tools, inherits prod)'
-        type: boolean
+      image_mode:
+        description: 'prod+dev = build prod + dev images; prod-only = prod only; dev-only = single dev image used for deployment too'
+        type: choice
         required: true
-        default: true
-      dev_image_only:
-        description: 'Only build the dev image (no separate prod/dev images; deployment also uses the dev image; the bundle contains only the dev image). Overrides build_dev_image.'
-        type: boolean
-        required: true
-        default: false
+        default: 'prod+dev'
+        options:
+          - 'prod+dev'
+          - 'prod-only'
+          - 'dev-only'
       image_prefix:
         description: 'Image name prefix (produces <prefix>:prod-<tag> and <prefix>:dev-<tag>)'
         type: string
@@ -228,16 +204,16 @@ jobs:
           ENABLE_NODE: ${{ inputs.enable_node }}
           NODE_VERSION: ${{ inputs.node_version }}
           NPM_PACKAGES: ${{ inputs.npm_packages }}
-          NPM_REGISTRY: ${{ inputs.npm_registry }}
-          NPM_CUSTOM_REGISTRY_URL: ${{ inputs.npm_custom_registry_url }}
+          NPM_REGISTRY: ${{ startsWith(inputs.npm_registry, 'http') && 'Other (custom URL)' || inputs.npm_registry }}
+          NPM_CUSTOM_REGISTRY_URL: ${{ startsWith(inputs.npm_registry, 'http') && inputs.npm_registry || '' }}
           NPM_PACKAGES_DIR: ${{ inputs.npm_packages_dir }}
-          ENABLE_NGINX: ${{ inputs.enable_nginx }}
-          ENABLE_POSTGRES: ${{ inputs.enable_postgres }}
-          APP_DEPENDS_ON_NGINX: ${{ inputs.app_depends_on_nginx }}
-          APP_DEPENDS_ON_POSTGRES: ${{ inputs.app_depends_on_postgres }}
+          ENABLE_NGINX: ${{ contains(inputs.sidecars, 'nginx') }}
+          ENABLE_POSTGRES: ${{ contains(inputs.sidecars, 'postgres') }}
+          APP_DEPENDS_ON_NGINX: ${{ contains(inputs.app_depends_on, 'nginx') }}
+          APP_DEPENDS_ON_POSTGRES: ${{ contains(inputs.app_depends_on, 'postgres') }}
           PROD_COMMAND: ${{ inputs.prod_command }}
-          BUILD_DEV_IMAGE: ${{ inputs.build_dev_image }}
-          DEV_IMAGE_ONLY: ${{ inputs.dev_image_only }}
+          BUILD_DEV_IMAGE: ${{ inputs.image_mode == 'prod+dev' }}
+          DEV_IMAGE_ONLY: ${{ inputs.image_mode == 'dev-only' }}
           IMAGE_PREFIX: ${{ inputs.image_prefix }}
           IMAGE_TAG: ${{ inputs.image_tag }}
           APP_SOURCE_DIR: ${{ inputs.app_source_dir }}

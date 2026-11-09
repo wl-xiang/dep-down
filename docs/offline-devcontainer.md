@@ -75,16 +75,12 @@ make up (python main.py)
 | `enable_node` | boolean | — | `false` | 镜像内置 Node.js + npm，用于前端离线开发（vite / webpack / vue / react） |
 | `node_version` | choice | `18` / `20` / `22` / `24` | `20` | Node.js 版本（与 Npm Download 工作流保持一致） |
 | `npm_packages` | string | 用 `$` 分隔，如 `vite$webpack$webpack-cli$vue$react` | 空 | 构建期全局安装的 npm 包（需要 `enable_node=true`；构建机联网安装，内网容器可直接使用） |
-| `npm_registry` | choice | 与 Npm Download 相同 | `npmmirror (taobao)` | 构建期安装 npm 包使用的镜像源 |
-| `npm_custom_registry_url` | string | URL | 空 | 仅当 `npm_registry=Other (custom URL)` 时必填 |
+| `npm_registry` | string | 镜像源名称或 URL | `npmmirror (taobao)` | 构建期安装 npm 包使用的镜像源：`npmmirror (taobao)` / `Tencent` / `Huawei` / `THU (tuna)` / `USTC` / `Official (npmjs.org)`；也可直接填 `http(s)://` 开头的自定义 URL |
 | `npm_packages_dir` | string | 相对/绝对路径 | `packages` | Npm Download 产物（顶层 `packages/`）在宿主机的位置，只读挂载到容器 `/opt/npm-packages`（需 `enable_node=true`） |
-| `enable_nginx` | boolean | — | `false` | 启用 nginx 外挂服务（8080:80） |
-| `enable_postgres` | boolean | — | `false` | 启用 postgres 外挂服务（postgres:16，数据卷 pgdata） |
-| `app_depends_on_nginx` | boolean | — | `false` | app 服务 `depends_on` nginx（需先启用 nginx） |
-| `app_depends_on_postgres` | boolean | — | `false` | app 服务 `depends_on` postgres（需先启用 postgres） |
+| `sidecars` | string | 逗号/空格分隔，如 `nginx postgres` | 空 | 启用的外挂服务：`nginx`（8080:80）、`postgres`（postgres:16，数据卷 pgdata） |
+| `app_depends_on` | string | 逗号/空格分隔，如 `nginx postgres` | 空 | app 服务 `depends_on` 的外挂服务（须在 `sidecars` 中同时启用） |
 | `prod_command` | string | 命令行 | `python main.py` | prod 服务启动命令 |
-| `build_dev_image` | boolean | — | `true` | 是否同时构建 dev 镜像（ruff/pytest 等，继承 prod） |
-| `dev_image_only` | boolean | — | `false` | 仅构建 dev 镜像：不再区分 prod/dev 两个镜像，部署（`make up`）也使用 dev 镜像，镜像归档只包含该 dev 镜像（优先于 `build_dev_image`） |
+| `image_mode` | choice | `prod+dev` / `prod-only` / `dev-only` | `prod+dev` | `prod+dev`：同时构建 prod 与 dev 镜像；`prod-only`：只构建 prod；`dev-only`：只构建 dev 镜像并用于部署（镜像归档只含该镜像） |
 | `image_prefix` | string | 小写字母/数字/`._-` | `devcontainer` | 镜像名前缀（生成 `<prefix>:prod-<tag>` / `<prefix>:dev-<tag>`；仅 dev 镜像模式只有 `<prefix>:dev-<tag>`） |
 | `image_tag` | choice | `latest` / `timestamp` | `latest` | 镜像 TAG 后缀：`latest`（每次构建覆盖同名镜像）或 `timestamp`（构建时间戳，UTC+8，如 `dev-20260101-120000`） |
 | `app_source_dir` | string | 相对/绝对路径 | `.` | 挂载进容器 `/app` 的目录：`.` = 整个项目根目录；相对路径 = 项目根目录下的子目录（如 monorepo 中的应用子目录，可避免 ruff/pytest 扫到无关源码）；也支持绝对路径。项目根目录由 `install.sh` 安装时传入（不支持 `~`） |
@@ -99,8 +95,8 @@ make up (python main.py)
 
 以下情况会在构建开始前直接失败并给出清晰错误：
 
-- `app_depends_on_nginx=true` 但 `enable_nginx=false`
-- `app_depends_on_postgres=true` 但 `enable_postgres=false`
+- `app_depends_on` 含 `nginx` 但 `sidecars` 未启用 nginx
+- `app_depends_on` 含 `postgres` 但 `sidecars` 未启用 postgres
 - `platform` / `python_version` / `glibc_version` / `pip_mirror` / `image_tag` 不在取值范围内
 - `image_prefix` 含非法字符（仅允许小写字母/数字/`.`/`_`/`-`）
 - `prod_command` 无法解析为命令
@@ -108,7 +104,7 @@ make up (python main.py)
 - `app_source_dir` / `env_file` 使用 `~`（不会展开，请写绝对路径或相对路径）
 - `preset_envs` 不是 `KEY=VALUE` 形式、变量名非法或重复
 - `npm_packages` 非空但 `enable_node=false`；npm 包名非法（仅 `name` / `@scope/name`，可带 `@版本`）
-- `npm_registry=Other (custom URL)` 但 `npm_custom_registry_url` 为空或不是合法 URL
+- `npm_registry` 既不是内置镜像源名称，也不是合法的 `http(s)://` URL
 - `npm_packages_dir` 含空白、`:`、`~` 等非法字符（仅允许字母/数字/`.`/`_`/`-`/`/`）
 
 ## 产物说明
@@ -126,7 +122,7 @@ zip 内含以下四个文件（`compression-level: 0`，仅存储不再二次压
 ### devcontainer-docker-images_<yyyymmdd-HHMMSS>.tgz
 
 该文件是 `docker save` 输出经 gzip 压缩得到的镜像归档（prod、dev、nginx、postgres，
-按本次参数），可直接 `docker load -i` 导入，无需再解一层 tar。勾选 `dev_image_only`
+按本次参数），可直接 `docker load -i` 导入，无需再解一层 tar。`image_mode=dev-only`
 时归档中只有一个 dev 镜像（外加按需启用的 nginx/postgres）。Summary 中同时给出
 SHA256，便于校验传输完整性。
 
@@ -149,7 +145,7 @@ devcontainer-src/
 ├── build.sh                     # 离线补装入口（复制到项目根）
 ├── .dockerignore                # 复制/合并到项目根：构建上下文排除 dist/ wheels/ 等
 ├── .gitignore                   # 复制/合并到项目根：忽略离线产物与补装缓存
-├── nginx/conf.d/                # 仅 enable_nginx 且指定 app_port 时生成反代配置
+├── nginx/conf.d/                # 仅 sidecars 含 nginx 且指定 app_port 时生成反代配置
 └── README.md                    # 快速上手说明（复制到项目根时改名为 README-devcontainer.md）
 ```
 
@@ -296,8 +292,8 @@ make up && make logs
 | `make test` | pytest -q |
 | `make package-src` | 重新打包 `docs/devcontainer` 为 tgz（输出到 `dist/`，可配 install.sh 再次安装） |
 
-> `shell/dev/lint/compile/test` 依赖 dev 镜像（`build_dev_image=true` 或
-> `dev_image_only=true` 时才有），通过 compose 的 `dev` profile 激活，不影响
+> `shell/dev/lint/compile/test` 依赖 dev 镜像（`image_mode=prod+dev` 或
+> `dev-only` 时才有），通过 compose 的 `dev` profile 激活，不影响
 > `make up` 的运行行为。
 >
 > 容器默认以当前用户身份运行：Makefile 自动导出 `HOST_UID`/`HOST_GID`
@@ -306,15 +302,15 @@ make up && make logs
 
 ## 外挂服务
 
-- **nginx**（`enable_nginx`）：`nginx:stable`，宿主机 `http://<host>:8080` →
+- **nginx**（`sidecars` 含 `nginx`）：`nginx:stable`，宿主机 `http://<host>:8080` →
   容器 80 端口。指定 `app_port` 时会生成 `nginx/conf.d/default.conf` 并挂载，
   自动反代到 `app:<app_port>`；未指定 `app_port` 时只启动默认 nginx，需要自行
   提供配置文件。
-- **postgres**（`enable_postgres`）：`postgres:16`，带 `pg_isready` 健康检查，
+- **postgres**（`sidecars` 含 `postgres`）：`postgres:16`，带 `pg_isready` 健康检查，
   仅容器网络内可达，连接串
   `postgres://postgres:postgres@postgres:5432/postgres`，数据持久化在 `pgdata`
   卷（`make down` 不删除数据卷）。
-- `app_depends_on_*` 生成 compose 的 `depends_on`：nginx 用 `service_started`，
+- `app_depends_on` 生成 compose 的 `depends_on`：nginx 用 `service_started`，
   postgres 用 `service_healthy`（等待健康检查通过，避免启动期连接被拒）。
 - 所有服务均设置 `restart: unless-stopped` 与 `pull_policy: never`，离线环境
   不会尝试拉取镜像。
@@ -384,8 +380,8 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
 - `npm_packages`（`$` 分隔，如 `vite$webpack$webpack-cli$vue$react`）会在
   构建期以 `npm_registry` 指定的镜像源全局安装，内网容器内可直接使用这些
   CLI（如 `vite --version`）；`make check` 会检查离线包目录是否存在 `.tgz`。
-- `make npm-install` 需要 dev 镜像（`build_dev_image=true` 或
-  `dev_image_only=true`），与 `make shell` 一致。
+- `make npm-install` 需要 dev 镜像（`image_mode=prod+dev` 或
+  `dev-only`），与 `make shell` 一致。
 
 ## 设计说明
 
@@ -475,7 +471,7 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
 - 镜像使用 `CMD`（而非 `ENTRYPOINT`）承载默认命令：`make up` 时 compose 的
   `command` 直接覆盖 CMD 执行 `python main.py`；`make shell` 通过 dev 镜像的
   `CMD ["bash"]` 进入交互终端，两者互不干扰。
-- 勾选 `dev_image_only` 时不再生成两个镜像：Dockerfile 只有单阶段 `dev`，
+- `image_mode=dev-only` 时不再生成两个镜像：Dockerfile 只有单阶段 `dev`，
   compose 的 app 服务直接引用该 dev 镜像并显式写入 `command`（镜像 CMD 为
   bash），`make up` 与 `make shell/lint/test` 共用同一个镜像；镜像归档中也
   只保存这一个镜像。
@@ -574,8 +570,8 @@ docs/devcontainer/ 内）。
 的 `PIP_MIRRORS` 中增加条目（含认证 URL），或经镜像反代公开化。
 
 **Q: 镜像归档体积偏大？**
-镜像归档含 prod+dev（或仅 dev）+外挂服务镜像，几百 MB 到 1GB+ 属正常。勾选
-`dev_image_only` 可少打一个 prod 镜像；后续可引入分层/增量导出方案优化；
+镜像归档含 prod+dev（或仅 dev）+外挂服务镜像，几百 MB 到 1GB+ 属正常。选择
+`image_mode=prod-only` 可少打一个 dev 镜像；后续可引入分层/增量导出方案优化；
 Summary 中记录了每次产物大小作为基线。
 
 **Q: 镜像里没有 Oracle Instant Client，容器报 `DPI-1047`？**
