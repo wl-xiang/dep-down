@@ -221,18 +221,23 @@ class Params:
 
     @property
     def tag(self):
-        """镜像 TAG 后缀：latest（默认）或本次构建时间戳（UTC+8）。"""
+        """镜像 TAG：latest（默认）或本次构建时间戳（UTC+8）。"""
         return self.ts if self.image_tag == "timestamp" else "latest"
 
     @property
     def prod_image(self):
-        """prod 镜像：<前缀>:prod-<TAG 后缀>。"""
-        return f"{self.image_prefix}:prod-{self.tag}"
+        """prod 镜像：<前缀>:<TAG>（如 mydevc1:latest）。"""
+        return f"{self.image_prefix}:{self.tag}"
 
     @property
     def dev_image(self):
-        """dev 镜像：<前缀>:dev-<TAG 后缀>。"""
-        return f"{self.image_prefix}:dev-{self.tag}"
+        """dev 镜像：<前缀>-dev:<TAG>（如 mydevc1-dev:latest）。"""
+        return f"{self.image_prefix}-dev:{self.tag}"
+
+    @property
+    def bundle_name(self):
+        """唯一 Artifact 名：<镜像前缀>_devcontainer_<时间戳>。"""
+        return f"{self.image_prefix}_devcontainer_{self.ts}"
 
     @property
     def app_image(self):

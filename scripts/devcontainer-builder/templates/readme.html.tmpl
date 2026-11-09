@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>离线开发环境安装指南 · devcontainer-bundle_{{TS}}</title>
+<title>离线开发环境安装指南 · {{BUNDLE_NAME}}</title>
 <style>
   :root {
     --bg: #eef2f7;
@@ -306,7 +306,7 @@
         </div>
         <div class="codeblock">
           <div class="codebar"><span class="code-label">项目根目录</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
-          <pre><code>mv devcontainer-bundle_{{TS}}.zip dist/</code></pre>
+          <pre><code>mv {{BUNDLE_NAME}}.zip dist/</code></pre>
         </div>
       </div>
 
@@ -334,7 +334,7 @@
         </div>
         <div class="codeblock">
           <div class="codebar"><span class="code-label">dist/</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
-          <pre><code>unzip devcontainer-bundle_{{TS}}.zip</code></pre>
+          <pre><code>unzip {{BUNDLE_NAME}}.zip</code></pre>
         </div>
       </div>
     </section>
@@ -465,11 +465,11 @@
       </ul>
       <p class="muted">详细说明见项目根目录的 <code>README-devcontainer.md</code>（与 <code>docs/devcontainer/README.md</code> 内容一致）。</p>
     </section>
-{{ORACLE_SECTION}}{{NPM_SECTION}}
+{{AGENT_HTML_SECTION}}{{ORACLE_SECTION}}{{NPM_SECTION}}
   </main>
 
   <footer>
-    镜像 TAG 后缀: {{TAG}} · 完整手册见仓库 docs/offline-devcontainer.md
+    镜像 TAG: {{TAG}} · 完整手册见仓库 docs/offline-devcontainer.md
   </footer>
 
 </div>

@@ -9,7 +9,8 @@
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         libaio1 libnsl2 \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
 ENV ORACLE_HOME=/opt/oracle/instantclient19 \
     LD_LIBRARY_PATH=/opt/oracle/instantclient19 \

@@ -44,7 +44,7 @@ make up (python main.py)
 1. 进入 Fork 后的仓库，点击 **Actions** → 左侧选择 **Build DevContainer** →
    **Run workflow**。
 2. 填写参数后运行。运行完成后在 **Summary** 底部 **Artifacts** 下载唯一产物
-   `devcontainer-bundle_<时间戳>.zip`（时间戳为 UTC+8），zip 解压得到四个文件：
+   `<image_prefix>_devcontainer_<时间戳>.zip`（时间戳为 UTC+8），zip 解压得到四个文件：
    - `devcontainer-docker-images_<时间戳>.tgz`：Docker Images 镜像归档
      （gzip 压缩的 `docker save` 输出，可直接 `docker load`）
    - `devcontainer-src_<时间戳>.tgz`：运行时源码包
@@ -77,8 +77,8 @@ make up (python main.py)
 | `app_depends_on` | string | 逗号/空格分隔，如 `nginx postgres` | 空 | app 服务 `depends_on` 的外挂服务（须在 `sidecars` 中同时启用） |
 | `prod_command` | string | 命令行 | `python main.py` | prod 服务启动命令 |
 | `image_mode` | choice | `prod+dev` / `prod-only` / `dev-only` | `prod+dev` | `prod+dev`：同时构建 prod 与 dev 镜像；`prod-only`：只构建 prod；`dev-only`：只构建 dev 镜像并用于部署（镜像归档只含该镜像） |
-| `image_prefix` | string | 小写字母/数字/`._-` | `mydevc1` | 镜像名前缀（生成 `<prefix>:prod-<tag>` / `<prefix>:dev-<tag>`；仅 dev 镜像模式只有 `<prefix>:dev-<tag>`） |
-| `image_tag` | choice | `latest` / `timestamp` | `latest` | 镜像 TAG 后缀：`latest`（每次构建覆盖同名镜像）或 `timestamp`（构建时间戳，UTC+8，如 `dev-20260101-120000`） |
+| `image_prefix` | string | 小写字母/数字/`._-` | `mydevc1` | 镜像名前缀：prod 镜像为 `<prefix>:<tag>`，dev 镜像为 `<prefix>-dev:<tag>`；仅 dev 镜像模式只有 `<prefix>-dev:<tag>`。Artifact 名也使用该前缀（`<prefix>_devcontainer_<时间戳>`） |
+| `image_tag` | choice | `latest` / `timestamp` | `latest` | 镜像 TAG：`latest`（每次构建覆盖同名镜像）或 `timestamp`（构建时间戳，UTC+8，如 `20260101-120000`） |
 | `app_source_dir` | string | 相对/绝对路径 | `.` | 挂载进容器 `/app` 的目录：`.` = 整个项目根目录；相对路径 = 项目根目录下的子目录（如 monorepo 中的应用子目录，可避免 ruff/pytest 扫到无关源码）；也支持绝对路径。项目根目录由 `install.sh` 安装时传入（不支持 `~`） |
 | `app_port` | string | `host:container` 或单个端口号 | `3000:3000` | 应用端口映射：写成 `3000:3000` 表示宿主机 3000 → 容器 3000；只写 `3000` 等价于 `3000:3000`；空 = 不映射。启用 nginx 时 app 仅容器网络暴露容器端口，由 nginx 反代 |
 | `env_file` | string | 逗号/空格分隔 | 空 | **注入 app 服务的环境变量文件**（等价 compose `env_file`）：文件中的变量会进入 app 容器，常用于放置数据库密码、密钥等不适合写进 `preset_envs` 的配置。相对项目根或绝对路径（如 `.env`） |
@@ -108,7 +108,7 @@ make up (python main.py)
 
 ## 产物说明
 
-唯一 Artifact 为 `devcontainer-bundle_<yyyymmdd-HHMMSS>.zip`（时间戳 UTC+8），
+唯一 Artifact 为 `<image_prefix>_devcontainer_<yyyymmdd-HHMMSS>.zip`（时间戳 UTC+8），
 zip 内含以下四个文件（`compression-level: 0`，仅存储不再二次压缩）：
 
 | 文件 | 用途 |
@@ -202,7 +202,7 @@ bash install.sh --load ../       # 加 --load：安装开始前自动 docker loa
 ## 内网使用步骤
 
 ```bash
-# 1. 下载唯一 Artifact devcontainer-bundle_<时间戳>.zip，
+# 1. 下载唯一 Artifact <image_prefix>_devcontainer_<时间戳>.zip，
 #    放到你的项目根目录 dist/ 文件夹下（没有就新建），并在 dist/ 中解压：
 
 # 2. 导入镜像 + 安装到项目根目录（均在 dist/ 中执行，参数 ../ 即项目根目录）
@@ -241,10 +241,11 @@ python scripts/pip/pip_download.py <包名...> -d /tmp/wheels
 #    把 /tmp/wheels 整个目录拷回内网项目根目录 wheels/
 
 # 2. 内网机器，在项目根目录执行：
-bash build.sh [新TAG后缀]     # 后缀默认 addon-<时间戳>，新镜像 = <前缀>:<stage>-<后缀>
+bash build.sh [新TAG后缀]     # 后缀默认 addon-<时间戳>；prod 新镜像 <前缀>:<后缀>，
+                             # dev 新镜像 <前缀>-dev:<后缀>
 
 # 3. 按输出的 sed 命令把项目根目录的 docker-compose.yml 切换到新镜像（如
-#    devcontainer:dev-addon-20260101-120000），然后：
+#    devcontainer-dev:addon-20260101-120000），然后：
 make up && make logs
 ```
 
@@ -253,8 +254,9 @@ make up && make logs
 - `Dockerfile.addon`（install.sh 复制到项目根目录时改名为 `Dockerfile`）
   按构建模式对每个应用镜像生成一个阶段（prod+dev 模式分别基于 prod / dev
   镜像；仅 dev 镜像模式只有 dev），`build.sh` 逐个
-  `docker build --target` 生成 `<前缀>:<stage>-addon-<时间戳>`
-  （如 `devcontainer:dev-addon-20260101-120000`，可传参自定义后缀）。
+  `docker build --target` 生成 addon 镜像：prod 为 `<前缀>:addon-<时间戳>`，
+  dev 为 `<前缀>-dev:addon-<时间戳>`（如 `devcontainer:addon-20260101-120000` /
+  `devcontainer-dev:addon-20260101-120000`，可传参自定义后缀）。
 - wheel 通过临时构建上下文复制到镜像内 `/tmp/addon-wheels`，`pip install
   --no-index --find-links` 安装后**同一 RUN 层内删除**——不会增大最终镜像
   体积；已在基础镜像中安装的依赖 pip 自动跳过。
@@ -299,6 +301,30 @@ make up && make logs
 > 容器默认以当前用户身份运行：Makefile 自动导出 `HOST_UID`/`HOST_GID`
 > （`$(id -u)` / `$(id -g)`），避免挂载目录出现 root 属主文件。临时需要
 > root 时：`make shell HOST_UID=0 HOST_GID=0`（命令行变量优先于默认值）。
+
+## 给 AI Agent 的使用约定
+
+安装到项目根的 `README-devcontainer.md`（bundle 内 src 包的 `README.md`）包含
+面向 AI 编码 Agent 的约定，核心是：**Python / Node 运行环境只在容器内，
+宿主机无需安装，也不要用宿主机的 `python` / `pip` / `pytest` / `npm`**。
+所有命令都在项目根目录执行：
+
+| 目的 | 推荐命令（prod+dev / dev-only） |
+|------|------|
+| 查看 Python 版本 | `docker compose run --rm dev python -V` |
+| 执行 Python 脚本 | `docker compose run --rm dev python path/to/script.py` |
+| 交互式 shell | `make shell` |
+| 运行测试 | `make test`（单个文件：`docker compose run --rm dev pytest -q tests/test_x.py`） |
+| 静态检查 / 编译检查 | `make lint` / `make compile` |
+| 启动应用 / 查看日志 | `make up` / `make logs` |
+| 前端离线依赖 | `make npm-install`（`enable_node=true` 时） |
+
+- 容器把项目根目录挂载为 `/app`，容器内修改会直接写回宿主机。
+- 首次使用先 `make check`；离线机器不要执行 `make build` / `docker compose build`。
+- 缺 Python 包时不要在宿主机 `pip install`，走「离线补装 Python 包」流程。
+- 仅 prod 镜像模式（`prod-only`）没有 ruff/pytest，一次性命令用
+  `docker compose run --rm app python ...`；需要测试工具时重新构建并选择
+  `prod+dev` 或 `dev-only`。
 
 ## 外挂服务
 
@@ -484,10 +510,15 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
 - 单个 `Dockerfile` 多阶段构建：`prod` 只含运行时；`dev` 阶段 `FROM prod`
   追加 git/curl/vim/make 与 ruff/pytest/pytest-cov（wheel 在构建阶段随
   `wheels/` 离线安装）。
-- 镜像命名 `<前缀>:<stage>-<TAG 后缀>`：如 `devcontainer:prod-latest` /
-  `devcontainer:dev-latest`（`image_tag=latest`，默认，每次构建覆盖）或
-  `devcontainer:prod-20260101-120000` / `devcontainer:dev-20260101-120000`
-  （`image_tag=timestamp`）。
+- 镜像命名：prod 为 `<前缀>:<TAG>`，dev 为 `<前缀>-dev:<TAG>`。如
+  `devcontainer:latest` / `devcontainer-dev:latest`（`image_tag=latest`，默认，
+  每次构建覆盖）或 `devcontainer:20260101-120000` /
+  `devcontainer-dev:20260101-120000`（`image_tag=timestamp`）。
+- 镜像瘦身：基础镜像固定 slim-bookworm；apt 安装后同层执行 `apt-get clean` 并
+  清理 lists/archives；pip 统一使用 `--no-compile`（不生成 `.pyc`，配合
+  `PYTHONDONTWRITEBYTECODE=1`）；Node.js 只复制 node/npm 并删除 npm 自带文档；
+  Oracle `full` 模式的 `wget`/`unzip` 只用于构建期下载，安装、解压与
+  `apt-get purge --auto-remove` 在同一层完成，不残留在运行时镜像中。
 - 镜像使用 `CMD`（而非 `ENTRYPOINT`）承载默认命令：`make up` 时 compose 的
   `command` 直接覆盖 CMD 执行 `python main.py`；`make shell` 通过 dev 镜像的
   `CMD ["bash"]` 进入交互终端，两者互不干扰。
@@ -591,9 +622,13 @@ docs/devcontainer/ 内）。
 的 `PIP_MIRRORS` 中增加条目（含认证 URL），或经镜像反代公开化。
 
 **Q: 镜像归档体积偏大？**
-镜像归档含 prod+dev（或仅 dev）+外挂服务镜像，几百 MB 到 1GB+ 属正常。选择
-`image_mode=prod-only` 可少打一个 dev 镜像；后续可引入分层/增量导出方案优化；
-Summary 中记录了每次产物大小作为基线。
+镜像归档含 prod+dev（或仅 dev）+外挂服务镜像，几百 MB 到 1GB+ 属正常。已内置的
+瘦身措施：slim-bookworm 基础镜像、apt 同层清理、pip `--no-compile`、Node 文档
+清理、Oracle `full` 模式构建工具同层 purge。进一步压缩可选：
+`image_mode=prod-only`（少一个 dev 镜像）、`image_mode=dev-only`（只保留一个镜像）、
+Oracle 用 `runtime_deps_only`（客户端不进镜像）、不启用 Node/Oracle 等可选组件；
+dev 镜像与 prod 镜像共享层，归档中公共层只存一份。Summary 中记录了每次产物大小
+作为基线。
 
 **Q: 镜像里没有 Oracle Instant Client，容器报 `DPI-1047`？**
 `runtime_deps_only` 模式按设计不把客户端放进镜像：确认宿主机已把 Instant

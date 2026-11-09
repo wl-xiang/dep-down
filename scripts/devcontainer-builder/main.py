@@ -12,7 +12,7 @@
        devcontainer-docker-images_<ts>.tgz 已在上一步直出；
        install.sh 与 readme.html 写入 dist/
     6. lib/summary.py 写 GITHUB_STEP_SUMMARY / GITHUB_OUTPUT，
-       上传唯一 Artifact：devcontainer-bundle_<ts>（zip，内含镜像归档 tgz、
+       上传唯一 Artifact：<image_prefix>_devcontainer_<ts>（zip，内含镜像归档 tgz、
        src tgz、install.sh 与 readme.html 四个文件）
 
 本地联调可设置 DEVCONTAINER_SKIP_DOCKER=1 跳过 docker 步骤。

@@ -4,7 +4,9 @@
 #
 # 用途：离线补装 Python 包——把 wheel 打进现有镜像，生成 addon 镜像。
 # 用法: bash build.sh [新TAG后缀]     # 后缀默认 addon-{{TS}}，
-#                                     # 新镜像 = <前缀>:<stage>-<后缀>（如 <前缀>:dev-addon-{{TS}}）
+#                                     # 新镜像沿用仓库名：prod <前缀>:<后缀>、
+#                                     #                  dev  <前缀>-dev:<后缀>
+#                                     #（如 mydevc1:addon-{{TS}} / mydevc1-dev:addon-{{TS}}）
 #
 # 本脚本由 install.sh 安装到项目根目录（src root），所有路径按执行时的工作
 # 目录（pwd）解析——请在项目根目录执行；docs/devcontainer 下是原始副本，
@@ -48,7 +50,7 @@ if [ -f "$WHEELS_DIR/requirements.txt" ]; then
 fi
 trap 'rm -rf "$STAGING"' EXIT
 
-build() {  # $1=Dockerfile target, $2=原镜像, $3=新镜像 TAG 后缀
+build() {  # $1=Dockerfile target, $2=原镜像, $3=新镜像 TAG
     local new="${2%:*}:$3"
     echo "== build $1 -> $new =="
     docker build -f "$SRC_ROOT/Dockerfile" --target "$1" -t "$new" "$STAGING"

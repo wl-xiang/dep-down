@@ -20,7 +20,7 @@
 | 平台 | {{DOCKER_PLATFORM}} |
 | Python | {{PYTHON_VERSION}} |
 | 构建时间戳 (UTC+8) | `{{TS}}` |
-| 镜像 TAG 后缀 | `{{TAG}}` |
+| 镜像 TAG | `{{TAG}}` |
 | 镜像 | {{IMAGE_SUMMARY}} |
 | 外挂服务 | {{SERVICES_SUMMARY}} |
 | Oracle Instant Client | {{ORACLE_SUMMARY}} |
@@ -34,7 +34,7 @@ CPU 架构与上表平台一致。
 
 ```bash
 # 0. 把 bundle zip 放到项目根目录 dist/ 文件夹下并解压（见 dist/readme.html）
-#    unzip devcontainer-bundle_<时间戳>.zip   # 在 dist/ 中执行
+#    unzip {{BUNDLE_NAME}}.zip   # 在 dist/ 中执行
 
 # 1. 导入镜像 + 安装（在 dist/ 中执行，参数 ../ 即项目根目录）
 #    --load 会在安装开始前自动 docker load 同目录的镜像归档（一步到位）
@@ -59,6 +59,7 @@ make up && make logs
 make down         # 停止
 ```
 
+{{AGENT_SECTION}}
 ## 说明
 
 - **所有 make / build.sh 命令都在项目根目录执行**：Makefile 与 build.sh 的路径
@@ -88,10 +89,10 @@ make down         # 停止
   镜像层或被误提交。
 - **离线补装 Python 包**：发现缺包时，在联网机器用本仓库的
   `scripts/pip/pip_download.py` 下载 wheel 到项目根目录 `wheels/`，然后在
-  项目根目录执行 `bash build.sh`——基于现有镜像生成
-  `<镜像前缀>:<stage>-addon-{{TS}}` 新镜像（wheel 只在构建层临时存在，不会
-  增大镜像体积），按输出的 sed 命令切换项目根目录的 `docker-compose.yml`
-  即可。详见下文「离线补装 Python 包」。
+  项目根目录执行 `bash build.sh`——基于现有镜像生成 addon 新镜像（prod 为
+  `<镜像前缀>:addon-{{TS}}`，dev 为 `<镜像前缀>-dev:addon-{{TS}}`；wheel 只在
+  构建层临时存在，不会增大镜像体积），按输出的 sed 命令切换项目根目录的
+  `docker-compose.yml` 即可。详见下文「离线补装 Python 包」。
 - 本包**不含 `wheels/`**：所有 wheel 已在构建镜像时安装（构建端经 BuildKit
   bind mount 参与安装，不占用镜像体积，运行容器内没有 wheels）。离线安装
   额外依赖请用 `build.sh` 补装（见下文）；临时应急可把 wheel 放入项目根
@@ -115,7 +116,7 @@ python scripts/pip/pip_download.py <包名...> -d /tmp/wheels
 #    把 /tmp/wheels 整个目录拷回内网项目根目录 wheels/
 
 # 2. 内网机器，项目根目录执行：
-bash build.sh            # 生成 <镜像前缀>:<stage>-addon-{{TS}}（可传参自定义新 TAG 后缀）
+bash build.sh            # 生成 addon 新镜像（prod <镜像前缀>:<后缀>、dev <镜像前缀>-dev:<后缀>；可传参自定义后缀）
 
 # 3. 按输出的 sed 命令把项目根目录的 docker-compose.yml 切换到新镜像，然后：
 make up && make logs
