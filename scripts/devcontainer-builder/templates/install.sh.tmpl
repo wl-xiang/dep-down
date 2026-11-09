@@ -221,6 +221,20 @@ if [ "$NEEDS_MAIN_PY" = "1" ] && [ ! -e "$SRC_ROOT/main.py" ]; then
     ok "已创建占位入口 $SRC_ROOT/main.py（make up 默认运行 python main.py，请替换为真实入口）"
 fi
 
+# npm 离线包目录（默认项目根目录 packages/）：提前创建，避免 docker 以 root
+# 身份自动创建空目录；产物由 Npm Download Action 解压后放入该目录。
+if [ "{{NODE_ENABLED}}" = "1" ]; then
+    case "{{NPM_PACKAGES_DIR}}" in
+        /*)
+            note "npm 离线包目录为绝对路径 {{NPM_PACKAGES_DIR}}（不在项目根内，install.sh 不创建）"
+            ;;
+        *)
+            mkdir -p "$SRC_ROOT/{{NPM_PACKAGES_DIR}}"
+            ok "已准备 npm 离线包目录 $SRC_ROOT/{{NPM_PACKAGES_DIR}}（放入 Npm Download 产物的 packages/ 内容）"
+            ;;
+    esac
+fi
+
 echo ""
 printf '%s\n' "${C_GREEN}${C_BOLD}======================== 安装完成 ========================${C_RESET}"
 echo "根目录操作文件: ${C_BOLD}$SRC_ROOT${C_RESET}"
@@ -237,3 +251,4 @@ echo "  2. cd ${C_BOLD}\"$SRC_ROOT\"${C_RESET}                          # 所有
 echo "  3. ${C_GREEN}make check && make up && make logs${C_RESET}"
 echo "  （make shell / lint / compile / test 也在项目根目录执行；docs/devcontainer 下"
 echo "    是原始副本，改坏根目录文件时从那里复制回来重置即可）"
+{{ORACLE_NOTICE_BLOCK}}{{NPM_NOTICE_BLOCK}}

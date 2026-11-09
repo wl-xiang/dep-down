@@ -23,6 +23,8 @@
 | 镜像 TAG 后缀 | `{{TAG}}` |
 | 镜像 | {{IMAGE_SUMMARY}} |
 | 外挂服务 | {{SERVICES_SUMMARY}} |
+| Oracle Instant Client | {{ORACLE_SUMMARY}} |
+| Node.js / npm | {{NODE_SUMMARY}} |
 | pip 镜像源 | {{PIP_MIRROR}} |
 
 ## 首次使用（内网机器）
@@ -101,7 +103,7 @@ make down         # 停止
 - `make check` 可离线自检镜像是否已导入、架构是否匹配。
 - `make help` 查看全部可用目标。
 {{DEV_TOOLS_NOTE}}
-
+{{ORACLE_SECTION}}{{NPM_SECTION}}
 ## 离线补装 Python 包（build.sh）
 
 构建时漏了的包、后来才需要的包，都可以在不联网的机器上补进镜像：

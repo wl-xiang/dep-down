@@ -50,6 +50,46 @@ LUCIDE_PIP_PACKAGE = "lucide"
 # 环境验证（参考 https://github.com/wl-xiang/oracle2excel 的 Dockerfile）。
 ORACLEDB_PIP_PACKAGE = "oracledb==2.5.1"
 
+# Oracle Instant Client 的容器内固定挂载点与环境变量地址。
+# 客户端本体不打进镜像（减小镜像体积），由 compose 从宿主机只读挂载，
+# 同一台服务器上的多个容器共用同一份客户端。
+ORACLE_CLIENT_DIR = "/opt/oracle/instantclient19"
+
+# npm download Action 产物（packages/）在容器内的只读挂载点
+NPM_PACKAGES_CONTAINER_DIR = "/opt/npm-packages"
+
+# 预设环境变量的分隔符（workflow 输入框无法换行）
+ENV_PRESET_SEPARATOR = "》》"
+
+NODE_VERSIONS = ("18", "20", "22", "24")
+
+# 与 .github/workflows/npm_download.yml 的 registry 选项保持一致
+NPM_REGISTRIES = {
+    "npmmirror (taobao)": "https://registry.npmmirror.com",
+    "Tencent": "https://mirrors.cloud.tencent.com/npm/",
+    "Huawei": "https://repo.huaweicloud.com/repository/npm/",
+    "THU (tuna)": "https://mirrors.tuna.tsinghua.edu.cn/npm/",
+    "USTC": "https://mirrors.ustc.edu.cn/npm/",
+    "Official (npmjs.org)": "https://registry.npmjs.org",
+}
+
+NPM_OTHER_REGISTRY = "Other (custom URL)"
+
+# 自定义 npm 源会拼进 Dockerfile 的 RUN 命令，限制为安全的 URL 字符
+NPM_REGISTRY_URL_RE = re.compile(r"^https?://[A-Za-z0-9._~:/\[\]@%+=,-]+$")
+
+# npm 离线包目录会拼进 compose / Makefile / install.sh，限制为安全路径字符
+NPM_PACKAGES_DIR_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
+
+ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+# npm 包名（可带 @scope/ 前缀与 @version 后缀）；刻意排除空格与 shell 元字符，
+# 因为包名会直接拼进 Dockerfile 的 RUN 命令
+NPM_PACKAGE_RE = re.compile(
+    r"^(@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*(@[a-z0-9][a-z0-9._-]*)?$",
+    re.IGNORECASE,
+)
+
 # 产物/镜像时间戳统一使用东八区（UTC+8）
 TZ_CN = timezone(timedelta(hours=8), name="UTC+8")
 
@@ -101,6 +141,13 @@ class Params:
     app_source_dir: str
     app_port: str
     env_file: str
+    preset_envs: str
+    enable_node: bool
+    node_version: str
+    npm_packages: str
+    npm_registry: str
+    npm_custom_registry_url: str
+    npm_packages_dir: str
     selinux_relabel: bool
     image_tag: str
     ts: str
@@ -215,6 +262,59 @@ class Params:
         return [x for x in self.env_file.replace(",", " ").split() if x]
 
     @property
+    def preset_env_pairs(self):
+        """预设环境变量：KEY=VALUE，多个用 》》 分隔。"""
+        pairs = []
+        for item in self.preset_envs.split(ENV_PRESET_SEPARATOR):
+            item = item.strip()
+            if not item:
+                continue
+            key, _, value = item.partition("=")
+            pairs.append((key.strip(), value.strip()))
+        return pairs
+
+    @property
+    def npm_package_list(self):
+        return [x.strip() for x in self.npm_packages.split("$") if x.strip()]
+
+    @property
+    def npm_registry_url(self):
+        if self.npm_registry == NPM_OTHER_REGISTRY:
+            return self.npm_custom_registry_url
+        return NPM_REGISTRIES[self.npm_registry]
+
+    @property
+    def oracle_client_dir(self):
+        """Oracle 客户端在容器内的固定路径（也是 ORACLE_HOME/LD_LIBRARY_PATH）。"""
+        return ORACLE_CLIENT_DIR
+
+    @property
+    def npm_packages_mount(self):
+        """npm 离线包目录：空字符串表示不挂载。"""
+        if not self.enable_node or not self.npm_packages_dir:
+            return ""
+        return f"{self.npm_packages_mount_source}:{NPM_PACKAGES_CONTAINER_DIR}:ro"
+
+    @property
+    def npm_packages_mount_source(self):
+        """宿主机目录（相对项目根或绝对路径），compose 中可用 NPM_PACKAGES_DIR 覆盖。"""
+        path = self.npm_packages_dir.removeprefix("./")
+        if self.npm_packages_dir.startswith("/"):
+            return "${NPM_PACKAGES_DIR:-" + self.npm_packages_dir + "}"
+        return "${NPM_PACKAGES_DIR:-./" + path + "}"
+
+    @property
+    def oracle_client_mount(self):
+        """Oracle 客户端只读挂载：宿主机目录可用 ORACLE_CLIENT_DIR 覆盖。"""
+        if not self.enable_oracle_instantclient:
+            return ""
+        return f"{self.oracle_client_mount_source}:{ORACLE_CLIENT_DIR}:ro"
+
+    @property
+    def oracle_client_mount_source(self):
+        return "${ORACLE_CLIENT_DIR:-" + ORACLE_CLIENT_DIR + "}"
+
+    @property
     def mount_path(self):
         """容器 /app 的挂载源。${SRC_ROOT:-./} 由 docker compose 在运行时解析
         （默认 ./ = docker-compose.yml 所在的项目根目录）；app_source_dir 为
@@ -260,6 +360,13 @@ def load():
         app_source_dir=_env("APP_SOURCE_DIR", "."),
         app_port=_env("APP_PORT", ""),
         env_file=_env("ENV_FILE", ""),
+        preset_envs=_env("PRESET_ENVS", ""),
+        enable_node=_env_bool("ENABLE_NODE", False),
+        node_version=_env("NODE_VERSION", "20"),
+        npm_packages=_env("NPM_PACKAGES", ""),
+        npm_registry=_env("NPM_REGISTRY", "npmmirror (taobao)"),
+        npm_custom_registry_url=_env("NPM_CUSTOM_REGISTRY_URL", ""),
+        npm_packages_dir=_env("NPM_PACKAGES_DIR", "packages"),
         selinux_relabel=_env_bool("SELINUX_RELABEL", False),
         image_tag=_env("IMAGE_TAG", "latest"),
         ts=datetime.now(TZ_CN).strftime("%Y%m%d-%H%M%S"),
@@ -296,6 +403,59 @@ def validate(p):
         raise ParamError(
             "app_depends_on_postgres=true 需要同时设置 enable_postgres=true"
         )
+    if p.npm_registry not in NPM_REGISTRIES and p.npm_registry != NPM_OTHER_REGISTRY:
+        raise ParamError(
+            f"不支持的 npm_registry: {p.npm_registry!r}，可选: "
+            f"{', '.join(NPM_REGISTRIES)}, {NPM_OTHER_REGISTRY}"
+        )
+    if p.node_version not in NODE_VERSIONS:
+        raise ParamError(
+            f"不支持的 node_version: {p.node_version!r}，可选: {', '.join(NODE_VERSIONS)}"
+        )
+    if p.npm_registry == NPM_OTHER_REGISTRY and not p.npm_custom_registry_url:
+        raise ParamError(
+            "npm_registry 为 'Other (custom URL)' 时必须填写 npm_custom_registry_url"
+        )
+    if p.npm_registry == NPM_OTHER_REGISTRY and not NPM_REGISTRY_URL_RE.match(
+        p.npm_custom_registry_url
+    ):
+        raise ParamError(
+            "npm_custom_registry_url 非法（需 http(s):// 开头，且不含空白/引号/$ 等字符）: "
+            f"{p.npm_custom_registry_url!r}"
+        )
+    if p.npm_packages and not p.enable_node:
+        raise ParamError("npm_packages 需要同时设置 enable_node=true")
+    for pkg in p.npm_package_list:
+        if not NPM_PACKAGE_RE.match(pkg):
+            raise ParamError(
+                f"npm 包名非法（仅允许 name / @scope/name，可带 @版本；"
+                f"多个包请用 $ 分隔）: {pkg!r}"
+            )
+    if not NPM_PACKAGES_DIR_RE.match(p.npm_packages_dir):
+        raise ParamError(
+            f"npm_packages_dir 非法（仅允许字母/数字/./_/-，相对项目根或绝对路径，"
+            f"不支持 ~ 展开）: {p.npm_packages_dir!r}"
+        )
+
+    # 预设环境变量：KEY=VALUE，多个用 》》 分隔；校验名称并拒绝重复键
+    seen_env = set()
+    for item in p.preset_envs.split(ENV_PRESET_SEPARATOR):
+        item = item.strip()
+        if not item:
+            continue
+        key, sep, _value = item.partition("=")
+        key = key.strip()
+        if not sep:
+            raise ParamError(
+                f"预设环境变量必须为 KEY=VALUE 形式: {item!r}"
+                "（多个变量用 》》 分隔）"
+            )
+        if not ENV_NAME_RE.match(key):
+            raise ParamError(f"预设环境变量名非法: {key!r}")
+        if key in seen_env:
+            raise ParamError(f"预设环境变量重复: {key!r}")
+        seen_env.add(key)
+
     if not IMAGE_PREFIX_RE.match(p.image_prefix):
         raise ParamError(
             f"image_prefix 非法（仅允许小写字母/数字/./_/-，且以字母或数字开头）: "

@@ -20,7 +20,8 @@ scripts/devcontainer-builder/
     ├── Dockerfile.prod.tmpl       # prod 阶段（基础镜像 + APT/自定义命令/Oracle + 离线 pip install）
     ├── Dockerfile.dev.tmpl        # dev 阶段（FROM prod + 开发工具）
     ├── Dockerfile.devonly.tmpl    # 仅 dev 镜像模式的单阶段 Dockerfile
-    ├── Dockerfile.oracle.tmpl     # Oracle Instant Client 19 块（enable_oracle_instantclient 时插入）
+    ├── Dockerfile.oracle.tmpl     # Oracle 依赖/环境变量块（客户端由 compose 挂载，enable_oracle_instantclient 时插入）
+    ├── Dockerfile.node.tmpl       # Node.js/npm 块（从官方 node 镜像复制，enable_node 时插入）
     ├── compose.base.tmpl          # compose 模板骨架（app 服务 + 占位块；输出为 .tpl）
     ├── compose.service.nginx.tmpl # nginx 服务子模板
     ├── compose.service.postgres.tmpl # postgres 服务子模板（含健康检查）
@@ -50,7 +51,14 @@ scripts/devcontainer-builder/
 | `APT_PACKAGES` | 空 | 空格分隔的 APT 包 |
 | `CUSTOM_INSTALL_CMD` | 空 | 镜像内的个性化安装命令 |
 | `ENABLE_LUCIDE` | `false` | 预装 lucide（SVG 图标库，Django/Jinja 模板用，pip 包） |
-| `ENABLE_ORACLE_INSTANTCLIENT` | `false` | 预装 Oracle Instant Client 19（Thick 模式连 Oracle 11.2）+ `oracledb==2.5.1` |
+| `ENABLE_ORACLE_INSTANTCLIENT` | `false` | 安装 Oracle 运行依赖 + 环境变量 + `oracledb==2.5.1`；客户端由 compose 从宿主机挂载 |
+| `PRESET_ENVS` | 空 | 预设环境变量，`》》` 分隔的 `KEY=VALUE`（注入 app/dev 服务） |
+| `ENABLE_NODE` | `false` | 镜像内置 Node.js + npm（前端离线开发） |
+| `NODE_VERSION` | `20` | `18` / `20` / `22` / `24` |
+| `NPM_PACKAGES` | 空 | `$` 分隔的全局 npm 包（需 `ENABLE_NODE=true`） |
+| `NPM_REGISTRY` | `npmmirror (taobao)` | 与 npm_download.yml 相同的镜像源选项 |
+| `NPM_CUSTOM_REGISTRY_URL` | 空 | `NPM_REGISTRY=Other (custom URL)` 时必填 |
+| `NPM_PACKAGES_DIR` | `packages` | Npm Download 产物目录，只读挂载到 `/opt/npm-packages` |
 | `ENABLE_NGINX` | `false` | 启用 nginx 服务 |
 | `ENABLE_POSTGRES` | `false` | 启用 postgres 服务 |
 | `APP_DEPENDS_ON_NGINX` | `false` | app depends_on nginx |
@@ -121,11 +129,18 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   .dockerignore 影响。
 - **预装组件（勾选项）**：`enable_lucide` → 追加 pip 包 `lucide`（纯 Python
   wheel，Django/Jinja 模板渲染 lucide.dev SVG 图标）；`enable_oracle_instantclient`
-  → Dockerfile 注入 Oracle Instant Client 19.19 安装块（bookworm libaio1、
-  TARGETARCH 分架构官方直链下载、ELF 机器类型校验，参照
-  github.com/wl-xiang/oracle2excel 生产验证实现）并追加 `oracledb==2.5.1`。
+  → 镜像只安装 `libaio1` / `libnsl2` 并配置 `ORACLE_HOME` /
+  `LD_LIBRARY_PATH` / `TNS_ADMIN`，追加 `oracledb==2.5.1`；Instant Client
+  本体不下进镜像，由 compose 把 `${ORACLE_CLIENT_DIR:-/opt/oracle/instantclient19}`
+  只读挂载到容器 `/opt/oracle/instantclient19`（多容器共用，减小镜像体积）；
+  `enable_node` → 从官方 `node:<版本>-slim-bookworm` 复制 node/npm，可选
+  `npm_packages` 构建期全局安装；Npm Download 产物目录由 compose 只读挂载到
+  `/opt/npm-packages`，配合 `make npm-install` 离线安装前端依赖。
   两者的 pip 包并入 requirements.txt 与 pip download（用户显式列出同名包时
   以用户声明为准），环境变量与 workflow inputs 一一对应。
+- **预设环境变量**：`preset_envs`（`》》` 分隔的 `KEY=VALUE`）渲染为 compose
+  app/dev 服务的 `environment`；与 Oracle 默认变量合并（同名覆盖），值中的
+  `$` 转义为 `$$` 保证按字面量注入。
 - **多阶段 Dockerfile**：`prod`（运行时）与 `dev`（`FROM prod` + ruff/pytest
   等工具）在同文件内分阶段构建，compose 通过 `target` 区分；dev 服务挂
   `profiles: [dev]`，仅 `make shell/lint/test` 激活，不影响 `make up`。
@@ -156,5 +171,8 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   可在安装开始前自动 docker load 同目录的镜像归档 tgz）。
 - **glibc 语义**：基础镜像固定 slim-bookworm（glibc 2.36），glibc 参数仅决定
   pip download 请求的 manylinux 标签集合（目标 glibc 及以下全部标签）。
-- **YAML 安全**：compose 中的 `command` 与 `volumes` 挂载路径使用
-  JSON 转义后的双引号标量注入，避免命令含 `:` / 空格时破坏 YAML 结构。
+- **YAML 安全**：compose 中的 `command`、`/app` 挂载与 `environment` 值使用
+  JSON 转义后的双引号标量注入，避免命令/环境变量含 `:`、空格、`$` 时破坏
+  YAML 结构；Oracle/npm 的只读挂载使用 compose 运行时变量
+  （`${ORACLE_CLIENT_DIR:-...}` / `${NPM_PACKAGES_DIR:-...}`），挂载路径在参数
+  校验阶段限制为安全字符。

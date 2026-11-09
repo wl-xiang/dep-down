@@ -52,6 +52,8 @@ pip install -r requirements.txt
 
 本仓库提供一个人工触发的工作流 `.github/workflows/build-devcontainer.yml`，在外网按参数（平台、Python 版本、glibc、pip 源与包、APT 工具、个性化安装命令、nginx/postgres 外挂服务等）构建 prod/dev 两个 Docker 镜像并打包。内网机器只需 Docker，通过 Volume 挂载源码 + docker compose 即可开发与运行，本机无需安装任何运行环境。
 
+此外还支持：Oracle Instant Client 只装依赖、客户端由宿主机挂载共用（减小镜像体积）；`》》` 分隔的预设环境变量；以及 Node.js/npm 前端离线开发（vite / webpack / vue / react），可直接挂载 Npm Download 工作流产出的 `packages/` 目录。
+
 ### 使用方法（Fork 后用）
 
 1. Fork 本仓库，进入 **Actions** → **Build DevContainer** → **Run workflow**。
