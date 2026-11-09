@@ -63,30 +63,30 @@ make up (python main.py)
 | 参数 | 类型 | 取值 / 格式 | 默认值 | 说明 |
 |------|------|------------|--------|------|
 | `platform` | choice | `linux-amd64` / `linux-arm64` | `linux-amd64` | 目标平台（需与内网机器 CPU 架构一致） |
-| `python_version` | choice | `3.12` / `3.13` | `3.13` | 容器内 Python 版本 |
-| `glibc_version` | choice | `2.17` / `2.28` / `2.34` | `2.28` | 控制 pip download 选用的 manylinux 标签（见「glibc 语义」） |
-| `pip_mirror` | choice | `pypi.org` / `aliyun` / `thu` | `thu` | pip 下载镜像源 |
+| `python_version` | choice | `3.10` / `3.11` / `3.12` / `3.13` | `3.13` | 容器内 Python 版本 |
 | `pip_packages` | string | 用 `$` 分隔，如 `numpy$pandas$requests` | 空 | 附加 pip 包（空 = 无附加依赖） |
 | `apt_packages` | string | 空格分隔，如 `git vim curl` | 空 | 镜像内安装的 APT 工具 |
 | `custom_install_cmd` | string | shell 命令 | 空 | 个性化安装命令，在镜像内 `RUN` 执行 |
 | `enable_lucide` | boolean | — | `false` | 预装 lucide（SVG 图标库，Django/Jinja 模板渲染 lucide.dev 图标，pip 纯 Python 包） |
-| `enable_oracle_instantclient` | boolean | — | `false` | 安装 Oracle Instant Client 的运行依赖（`libaio1`/`libnsl2`）+ `oracledb==2.5.1` + 环境变量；**客户端本体不打进镜像**，由 compose 从宿主机只读挂载到 `/opt/oracle/instantclient19`（多容器共用，见「Oracle Instant Client」） |
-| `preset_envs` | string | 用 `》》` 分隔，如 `DB_HOST=10.0.0.1》》DB_PORT=1521` | 空 | 预设环境变量，注入 app 与 dev 服务（同名值覆盖 Oracle 默认变量；值按字面量处理，`$` 无需转义） |
-| `enable_node` | boolean | — | `false` | 镜像内置 Node.js + npm，用于前端离线开发（vite / webpack / vue / react） |
-| `node_version` | choice | `18` / `20` / `22` / `24` | `20` | Node.js 版本（与 Npm Download 工作流保持一致） |
+| `enable_oracle_instantclient` | choice | `none` / `runtime_deps_only` / `full` | `none` | Oracle Instant Client 19 安装模式：`none` 不安装；`runtime_deps_only` 只装运行依赖（`libaio1`/`libnsl2`）+ `oracledb==2.5.1` + 环境变量，客户端本体由 compose 从宿主机只读挂载到 `/opt/oracle/instantclient19`（多容器共用）；`full` 完整安装，构建期从 Oracle 官方直链下载 Basic 包解压进镜像（客户端随镜像分发，无需挂载） |
+| `preset_envs` | string | 用单个 `》` 分隔，如 `DB_HOST=10.0.0.1》DB_PORT=1521` | 空 | 预设环境变量，注入 app 与 dev 服务（同名值覆盖 Oracle 默认变量；值按字面量处理，`$` 无需转义） |
+| `enable_node` | boolean | — | `false` | 镜像内置 Node.js 24 + npm，用于前端离线开发（vite / webpack / vue / react） |
 | `npm_packages` | string | 用 `$` 分隔，如 `vite$webpack$webpack-cli$vue$react` | 空 | 构建期全局安装的 npm 包（需要 `enable_node=true`；构建机联网安装，内网容器可直接使用） |
-| `npm_registry` | string | 镜像源名称或 URL | `npmmirror (taobao)` | 构建期安装 npm 包使用的镜像源：`npmmirror (taobao)` / `Tencent` / `Huawei` / `THU (tuna)` / `USTC` / `Official (npmjs.org)`；也可直接填 `http(s)://` 开头的自定义 URL |
-| `npm_packages_dir` | string | 相对/绝对路径 | `packages` | Npm Download 产物（顶层 `packages/`）在宿主机的位置，只读挂载到容器 `/opt/npm-packages`（需 `enable_node=true`） |
+| `npm_packages_dir` | string | 相对/绝对路径 | `packages` | **Npm Download 产物所在目录**：把该工作流产出的 `packages/` 内容（`*.tgz` + `package.json`）放这里，compose 会把它只读挂载到容器 `/opt/npm-packages`，供 `make npm-install` 离线安装前端依赖。相对项目根或绝对路径（需 `enable_node=true`） |
 | `sidecars` | string | 逗号/空格分隔，如 `nginx postgres` | 空 | 启用的外挂服务：`nginx`（8080:80）、`postgres`（postgres:16，数据卷 pgdata） |
 | `app_depends_on` | string | 逗号/空格分隔，如 `nginx postgres` | 空 | app 服务 `depends_on` 的外挂服务（须在 `sidecars` 中同时启用） |
 | `prod_command` | string | 命令行 | `python main.py` | prod 服务启动命令 |
 | `image_mode` | choice | `prod+dev` / `prod-only` / `dev-only` | `prod+dev` | `prod+dev`：同时构建 prod 与 dev 镜像；`prod-only`：只构建 prod；`dev-only`：只构建 dev 镜像并用于部署（镜像归档只含该镜像） |
-| `image_prefix` | string | 小写字母/数字/`._-` | `devcontainer` | 镜像名前缀（生成 `<prefix>:prod-<tag>` / `<prefix>:dev-<tag>`；仅 dev 镜像模式只有 `<prefix>:dev-<tag>`） |
+| `image_prefix` | string | 小写字母/数字/`._-` | `mydevc1` | 镜像名前缀（生成 `<prefix>:prod-<tag>` / `<prefix>:dev-<tag>`；仅 dev 镜像模式只有 `<prefix>:dev-<tag>`） |
 | `image_tag` | choice | `latest` / `timestamp` | `latest` | 镜像 TAG 后缀：`latest`（每次构建覆盖同名镜像）或 `timestamp`（构建时间戳，UTC+8，如 `dev-20260101-120000`） |
 | `app_source_dir` | string | 相对/绝对路径 | `.` | 挂载进容器 `/app` 的目录：`.` = 整个项目根目录；相对路径 = 项目根目录下的子目录（如 monorepo 中的应用子目录，可避免 ruff/pytest 扫到无关源码）；也支持绝对路径。项目根目录由 `install.sh` 安装时传入（不支持 `~`） |
-| `app_port` | string | 端口号 | 空 | 应用在容器内监听的端口。设置后：无 nginx 时映射宿主机同端口；启用 nginx 时由 nginx 反代，app 仅容器网络暴露 |
-| `env_file` | string | 逗号/空格分隔 | 空 | 注入 app 服务的 env 文件（相对应用根目录，如 `.env`；也支持绝对路径） |
+| `app_port` | string | `host:container` 或单个端口号 | `3000:3000` | 应用端口映射：写成 `3000:3000` 表示宿主机 3000 → 容器 3000；只写 `3000` 等价于 `3000:3000`；空 = 不映射。启用 nginx 时 app 仅容器网络暴露容器端口，由 nginx 反代 |
+| `env_file` | string | 逗号/空格分隔 | 空 | **注入 app 服务的环境变量文件**（等价 compose `env_file`）：文件中的变量会进入 app 容器，常用于放置数据库密码、密钥等不适合写进 `preset_envs` 的配置。相对项目根或绝对路径（如 `.env`） |
 | `selinux_relabel` | boolean | — | `false` | 给 `/app` 挂载追加 `:z` 重打标签（SELinux Enforcing 主机需要） |
+
+> **固定值（不再作为输入暴露）**：`glibc_version=2.28`（manylinux 标签）、
+> `pip_mirror=Official (pypi.org)`、Node.js `24`、
+> `npm_registry=Official (npmjs.org)`。
 
 > **提示**：`pip_packages` 输入框无法换行，使用 `$` 分隔多个包，与
 > `pip_download.yml` 的约定一致。
@@ -97,14 +97,13 @@ make up (python main.py)
 
 - `app_depends_on` 含 `nginx` 但 `sidecars` 未启用 nginx
 - `app_depends_on` 含 `postgres` 但 `sidecars` 未启用 postgres
-- `platform` / `python_version` / `glibc_version` / `pip_mirror` / `image_tag` 不在取值范围内
+- `platform` / `python_version` / `image_tag` / `enable_oracle_instantclient` 不在取值范围内
 - `image_prefix` 含非法字符（仅允许小写字母/数字/`.`/`_`/`-`）
 - `prod_command` 无法解析为命令
-- `app_port` 不是 1-65535 的整数
+- `app_port` 不是 1-65535 的端口号，或不是合法的 `host:container` 映射
 - `app_source_dir` / `env_file` 使用 `~`（不会展开，请写绝对路径或相对路径）
 - `preset_envs` 不是 `KEY=VALUE` 形式、变量名非法或重复
 - `npm_packages` 非空但 `enable_node=false`；npm 包名非法（仅 `name` / `@scope/name`，可带 `@版本`）
-- `npm_registry` 既不是内置镜像源名称，也不是合法的 `http(s)://` URL
 - `npm_packages_dir` 含空白、`:`、`~` 等非法字符（仅允许字母/数字/`.`/`_`/`-`/`/`）
 
 ## 产物说明
@@ -152,9 +151,10 @@ devcontainer-src/
 src 包内**只有 `docker-compose.yml.tpl` 模板，不包含渲染后的
 `docker-compose.yaml`**；模板中的 `${SRC_ROOT:-./}` 与 `${SRC_ROOT_NAME:-app}`
 两个环境变量由 docker compose 在运行时以 `:-` 默认值语法解析（默认
-`./` = 项目根目录、项目名后缀 `app`）。启用 Oracle / Node 时模板还会内置
-`${ORACLE_CLIENT_DIR:-/opt/oracle/instantclient19}` 与
-`${NPM_PACKAGES_DIR:-./packages}` 两个只读挂载，同样可在运行时用环境变量覆盖。
+`./` = 项目根目录、项目名后缀 `app`）。启用 Node 时模板还会内置
+`${NPM_PACKAGES_DIR:-./packages}` 只读挂载；Oracle 为 `runtime_deps_only`
+模式时另有 `${ORACLE_CLIENT_DIR:-/opt/oracle/instantclient19}` 只读挂载。
+两者都可在运行时用环境变量覆盖（`full` 模式客户端已打进镜像，不生成挂载）。
 
 `wheels/` 不再随源码包分发：所有 wheel 已在镜像构建阶段安装（云端构建经
 BuildKit bind mount 参与，不落入任何镜像层），运行容器内没有 wheels；
@@ -304,8 +304,8 @@ make up && make logs
 
 - **nginx**（`sidecars` 含 `nginx`）：`nginx:stable`，宿主机 `http://<host>:8080` →
   容器 80 端口。指定 `app_port` 时会生成 `nginx/conf.d/default.conf` 并挂载，
-  自动反代到 `app:<app_port>`；未指定 `app_port` 时只启动默认 nginx，需要自行
-  提供配置文件。
+  自动反代到 `app:<容器端口>`（`app_port` 冒号后的端口）；未指定 `app_port`
+  时只启动默认 nginx，需要自行提供配置文件。
 - **postgres**（`sidecars` 含 `postgres`）：`postgres:16`，带 `pg_isready` 健康检查，
   仅容器网络内可达，连接串
   `postgres://postgres:postgres@postgres:5432/postgres`，数据持久化在 `pgdata`
@@ -315,9 +315,12 @@ make up && make logs
 - 所有服务均设置 `restart: unless-stopped` 与 `pull_policy: never`，离线环境
   不会尝试拉取镜像。
 
-## Oracle Instant Client（客户端由宿主机挂载）
+## Oracle Instant Client
 
-勾选 `enable_oracle_instantclient` 后：
+`enable_oracle_instantclient` 是三选一模式：`none`（默认，不安装）、
+`runtime_deps_only`、`full`。
+
+### runtime_deps_only（客户端由宿主机挂载）
 
 - 镜像内**只安装运行依赖**（`libaio1`、`libnsl2`）+ `oracledb==2.5.1`，
   并配置环境变量：
@@ -349,10 +352,26 @@ make up && make logs
 - 挂载是只读的：升级客户端只需替换宿主机目录内容，再
   `make down && make up` 重启容器。
 
+### full（客户端完整安装进镜像）
+
+- 参考
+  [`oracle2excel` 的 Dockerfile](https://github.com/wl-xiang/oracle2excel/blob/main/Dockerfile)：
+  镜像内安装 `libaio1`、`libnsl2`、`wget`、`unzip`，并在**构建期**从 Oracle
+  官方公开直链下载 Instant Client 19 Basic 包（按 BuildKit `TARGETARCH`
+  选择 x64 / arm64），解压到 `/opt/oracle/instantclient19`，同时校验
+  `libclntsh.so.19.1` 的 ELF 架构与目标平台一致。
+- 环境变量与 `runtime_deps_only` 完全一致，`oracledb==2.5.1` 同样预装。
+- 客户端随镜像分发，**compose 不再挂载客户端**，内网无需准备任何 Oracle 文件；
+  代价是镜像体积增大，升级客户端需要重新构建镜像。
+- 验证：
+  ```bash
+  docker compose run --rm app python -c "import oracledb; oracledb.init_oracle_client(); print('OCI OK')"
+  ```
+
 ## 前端离线开发（Node.js / npm）
 
-勾选 `enable_node` 后，镜像内置指定版本的 Node.js + npm（从官方
-`node:<版本>-slim-bookworm` 镜像复制，运行期无需联网），用于
+勾选 `enable_node` 后，镜像内置 Node.js 24 + npm（从官方
+`node:24-slim-bookworm` 镜像复制，运行期无需联网），用于
 vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download** 工作流
 （仓库 `.github/workflows/npm_download.yml`）的集成方式：
 
@@ -369,8 +388,8 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
    ```
 4. 开发调试（二选一）：
    - 推荐：构建参数 `prod_command` 设为 `npm run dev -- --host 0.0.0.0`，
-     `app_port` 设为前端端口（vite 5173 / webpack 8080），`make up` 即带
-     宿主机端口映射；源码经 `/app` 挂载，支持热更新；
+     `app_port` 设为前端端口映射（vite `5173:5173` / webpack `8080:8080`），
+     `make up` 即带宿主机端口映射；源码经 `/app` 挂载，支持热更新；
    - 临时：在项目根执行
      `docker compose run --rm -p 5173:5173 dev npm run dev -- --host 0.0.0.0`
      （`make shell` 进入容器手动启动时需自行发布端口）。
@@ -378,8 +397,9 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
   `make npm-install NPM_PACKAGES_DIR=/data/packages`（Makefile 已导出该变量，
   compose 会自动使用）。
 - `npm_packages`（`$` 分隔，如 `vite$webpack$webpack-cli$vue$react`）会在
-  构建期以 `npm_registry` 指定的镜像源全局安装，内网容器内可直接使用这些
-  CLI（如 `vite --version`）；`make check` 会检查离线包目录是否存在 `.tgz`。
+  构建期以固定的官方源（`https://registry.npmjs.org`）全局安装，内网容器内
+  可直接使用这些 CLI（如 `vite --version`）；`make check` 会检查离线包目录
+  是否存在 `.tgz`。
 - `make npm-install` 需要 dev 镜像（`image_mode=prod+dev` 或
   `dev-only`），与 `make shell` 一致。
 
@@ -446,15 +466,15 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
 - 需要 root（容器内 `pip install` 到系统目录）时：
   `make shell HOST_UID=0 HOST_GID=0`。
 - 已知无害副作用：非 root UID 在容器内没有 passwd 条目，bash 提示
-  `I have no name!`；`app_port < 1024` 时非 root 无法绑定低端口。
+  `I have no name!`；容器端口小于 1024（`app_port` 冒号后的端口）时非 root 无法绑定低端口。
 
 ### glibc 语义
 
 - 基础镜像固定为 `python:<version>-slim-bookworm`（glibc 2.36），保证任何
   manylinux ≤ 2.34 标签的 wheel 都可运行。
-- `glibc_version` 仅控制 **pip download 阶段选用的 manylinux 标签**：下载时会
-  请求该 glibc 及其以下的所有 manylinux 标签（含 manylinux2014 别名），即
-  「兼容目标 glibc」的 wheel 集合。
+- `glibc_version` 固定为 `2.28`（不再作为输入）：仅控制 **pip download 阶段
+  选用的 manylinux 标签**，下载时会请求该 glibc 及其以下的所有 manylinux 标签
+  （含 manylinux2014 别名），即「兼容目标 glibc」的 wheel 集合。
 - 之所以传多个 `--platform`：pip（>= 25）对显式 `--platform` 不再做低版本 glibc
   标签展开，只传 `manylinux_2_28` 会漏掉仅带 `manylinux_2_17/manylinux2014`
   复合标签的 wheel（如 ruff）。
@@ -546,8 +566,9 @@ docs/devcontainer/ 内）。
 `:z`。
 
 **Q: 应用起来了但宿主机访问不到？**
-构建时设置 `app_port`（应用在容器内监听的端口），并确认应用监听 `0.0.0.0`
-而不是 `127.0.0.1`。启用 nginx 时宿主机访问 `:8080`，由 nginx 反代到 app。
+构建时设置 `app_port`（`host:container` 端口映射，如 `3000:3000`），并确认应用
+监听 `0.0.0.0` 而不是 `127.0.0.1`。启用 nginx 时宿主机访问 `:8080`，由 nginx
+反代到 app 的容器端口。
 
 **Q: 跨架构构建（amd64 Runner 构建 arm64 镜像）很慢？**
 不会出现：`platform=linux-arm64` 时工作流自动切换到 ARM 原生 Runner
@@ -575,10 +596,11 @@ docs/devcontainer/ 内）。
 Summary 中记录了每次产物大小作为基线。
 
 **Q: 镜像里没有 Oracle Instant Client，容器报 `DPI-1047`？**
-客户端按设计不进镜像：确认宿主机已把 Instant Client 19 解压到
-`/opt/oracle/instantclient19`（或设置 `ORACLE_CLIENT_DIR` 指向实际目录），并确认
-`libclntsh.so.19.1` 存在、架构与服务器一致。`docker compose config` 可查看实际
-挂载路径。验证命令见「Oracle Instant Client」一节。
+`runtime_deps_only` 模式按设计不把客户端放进镜像：确认宿主机已把 Instant
+Client 19 解压到 `/opt/oracle/instantclient19`（或设置 `ORACLE_CLIENT_DIR` 指向
+实际目录），并确认 `libclntsh.so.19.1` 存在、架构与服务器一致。
+`docker compose config` 可查看实际挂载路径。若不想在宿主机准备客户端，构建时
+改选 `full` 模式，客户端会直接打进镜像。验证命令见「Oracle Instant Client」一节。
 
 **Q: 前端项目怎么离线 `npm install` / 启动 vite / webpack？**
 构建时勾选 `enable_node`，把 Npm Download 产物 `packages/` 放到项目根目录

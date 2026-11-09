@@ -23,7 +23,7 @@ ARCH_MAP = {
     "linux-arm64": ("arm64", "aarch64"),
 }
 
-PYTHON_VERSIONS = ("3.12", "3.13")
+PYTHON_VERSIONS = ("3.10", "3.11", "3.12", "3.13")
 
 # glibc → manylinux 标签（pip 实际使用 manylinux_<glibc>_<arch> 形式，
 # 其中 manylinux2014 与 manylinux_2_17 等价）
@@ -50,18 +50,24 @@ LUCIDE_PIP_PACKAGE = "lucide"
 # 环境验证（参考 https://github.com/wl-xiang/oracle2excel 的 Dockerfile）。
 ORACLEDB_PIP_PACKAGE = "oracledb==2.5.1"
 
+# Oracle Instant Client 19 的安装模式：
+#   none              = 不安装
+#   runtime_deps_only = 只安装运行时依赖并配置环境变量，客户端由 compose 从宿主机挂载
+#   full              = 完整安装（构建期下载官方 Basic 包解压进镜像 + 运行时依赖）
+ORACLE_MODES = ("none", "runtime_deps_only", "full")
+
 # Oracle Instant Client 的容器内固定挂载点与环境变量地址。
-# 客户端本体不打进镜像（减小镜像体积），由 compose 从宿主机只读挂载，
-# 同一台服务器上的多个容器共用同一份客户端。
+# runtime_deps_only 模式下客户端本体不打进镜像（减小镜像体积），由 compose
+# 从宿主机只读挂载；full 模式把客户端解压到同一路径，保持环境变量一致。
 ORACLE_CLIENT_DIR = "/opt/oracle/instantclient19"
 
 # npm download Action 产物（packages/）在容器内的只读挂载点
 NPM_PACKAGES_CONTAINER_DIR = "/opt/npm-packages"
 
 # 预设环境变量的分隔符（workflow 输入框无法换行）
-ENV_PRESET_SEPARATOR = "》》"
+ENV_PRESET_SEPARATOR = "》"
 
-NODE_VERSIONS = ("18", "20", "22", "24")
+NODE_VERSIONS = ("24",)
 
 # 与 .github/workflows/npm_download.yml 的 registry 选项保持一致
 NPM_REGISTRIES = {
@@ -131,7 +137,7 @@ class Params:
     enable_nginx: bool
     enable_postgres: bool
     enable_lucide: bool
-    enable_oracle_instantclient: bool
+    oracle_instantclient_mode: str
     app_depends_on_nginx: bool
     app_depends_on_postgres: bool
     prod_command: str
@@ -195,7 +201,7 @@ class Params:
                     for x in pkgs}
         if self.enable_lucide and "lucide" not in existing:
             pkgs.append(LUCIDE_PIP_PACKAGE)
-        if (self.enable_oracle_instantclient
+        if (self.oracle_enabled
                 and "oracledb" not in existing):
             pkgs.append(ORACLEDB_PIP_PACKAGE)
         return pkgs
@@ -253,8 +259,34 @@ class Params:
         return images
 
     @property
+    def oracle_enabled(self):
+        return self.oracle_instantclient_mode != "none"
+
+    @property
+    def oracle_full(self):
+        """full 模式：客户端随镜像分发，不需要宿主机挂载。"""
+        return self.oracle_instantclient_mode == "full"
+
+    @property
+    def app_port_parts(self):
+        """(宿主机端口, 容器端口)；app_port 支持 3000 或 3000:3000 两种写法。"""
+        if not self.app_port:
+            return None
+        if ":" in self.app_port:
+            host, container = self.app_port.split(":", 1)
+        else:
+            host = container = self.app_port
+        return host, container
+
+    @property
     def has_app_port(self):
         return bool(self.app_port)
+
+    @property
+    def app_container_port(self):
+        """应用在容器内监听的端口（nginx 反代/expose 使用）。"""
+        parts = self.app_port_parts
+        return parts[1] if parts else ""
 
     @property
     def env_file_list(self):
@@ -263,7 +295,7 @@ class Params:
 
     @property
     def preset_env_pairs(self):
-        """预设环境变量：KEY=VALUE，多个用 》》 分隔。"""
+        """预设环境变量：KEY=VALUE，多个用 》 分隔。"""
         pairs = []
         for item in self.preset_envs.split(ENV_PRESET_SEPARATOR):
             item = item.strip()
@@ -305,8 +337,8 @@ class Params:
 
     @property
     def oracle_client_mount(self):
-        """Oracle 客户端只读挂载：宿主机目录可用 ORACLE_CLIENT_DIR 覆盖。"""
-        if not self.enable_oracle_instantclient:
+        """Oracle 客户端只读挂载：仅 runtime_deps_only 模式需要。"""
+        if self.oracle_instantclient_mode != "runtime_deps_only":
             return ""
         return f"{self.oracle_client_mount_source}:{ORACLE_CLIENT_DIR}:ro"
 
@@ -343,28 +375,32 @@ def load():
         platform=_env("PLATFORM", "linux-arm64"),
         python_version=_env("PYTHON_VERSION", "3.13"),
         glibc_version=_env("GLIBC_VERSION", "2.28"),
-        pip_mirror=_env("PIP_MIRROR", "thu"),
+        pip_mirror=_env("PIP_MIRROR", "pypi.org"),
         pip_packages=_env("PIP_PACKAGES", ""),
         apt_packages=_env("APT_PACKAGES", ""),
         custom_install_cmd=_env("CUSTOM_INSTALL_CMD", ""),
         enable_nginx=_env_bool("ENABLE_NGINX", False),
         enable_postgres=_env_bool("ENABLE_POSTGRES", False),
         enable_lucide=_env_bool("ENABLE_LUCIDE", False),
-        enable_oracle_instantclient=_env_bool("ENABLE_ORACLE_INSTANTCLIENT", False),
+        oracle_instantclient_mode=_env(
+            "ENABLE_ORACLE_INSTANTCLIENT", "none"
+        ).lower(),
         app_depends_on_nginx=_env_bool("APP_DEPENDS_ON_NGINX", False),
         app_depends_on_postgres=_env_bool("APP_DEPENDS_ON_POSTGRES", False),
         prod_command=_env("PROD_COMMAND", "python main.py"),
         build_dev_image=_env_bool("BUILD_DEV_IMAGE", True),
         dev_image_only=_env_bool("DEV_IMAGE_ONLY", False),
-        image_prefix=_env("IMAGE_PREFIX", "devcontainer"),
+        image_prefix=_env("IMAGE_PREFIX", "mydevc1"),
         app_source_dir=_env("APP_SOURCE_DIR", "."),
-        app_port=_env("APP_PORT", ""),
+        # app_port 显式置空 = 不映射端口（workflow 总会设置该变量）
+        app_port=(os.environ["APP_PORT"].strip()
+                  if "APP_PORT" in os.environ else "3000:3000"),
         env_file=_env("ENV_FILE", ""),
         preset_envs=_env("PRESET_ENVS", ""),
         enable_node=_env_bool("ENABLE_NODE", False),
-        node_version=_env("NODE_VERSION", "20"),
+        node_version=_env("NODE_VERSION", "24"),
         npm_packages=_env("NPM_PACKAGES", ""),
-        npm_registry=_env("NPM_REGISTRY", "npmmirror (taobao)"),
+        npm_registry=_env("NPM_REGISTRY", "Official (npmjs.org)"),
         npm_custom_registry_url=_env("NPM_CUSTOM_REGISTRY_URL", ""),
         npm_packages_dir=_env("NPM_PACKAGES_DIR", "packages"),
         selinux_relabel=_env_bool("SELINUX_RELABEL", False),
@@ -396,6 +432,11 @@ def validate(p):
     if p.image_tag not in IMAGE_TAG_CHOICES:
         raise ParamError(
             f"不支持的 image_tag: {p.image_tag!r}，可选: {', '.join(IMAGE_TAG_CHOICES)}"
+        )
+    if p.oracle_instantclient_mode not in ORACLE_MODES:
+        raise ParamError(
+            f"不支持的 enable_oracle_instantclient: {p.oracle_instantclient_mode!r}，"
+            f"可选: {', '.join(ORACLE_MODES)}"
         )
     if p.app_depends_on_nginx and not p.enable_nginx:
         raise ParamError("app_depends_on_nginx=true 需要同时设置 enable_nginx=true")
@@ -437,7 +478,7 @@ def validate(p):
             f"不支持 ~ 展开）: {p.npm_packages_dir!r}"
         )
 
-    # 预设环境变量：KEY=VALUE，多个用 》》 分隔；校验名称并拒绝重复键
+    # 预设环境变量：KEY=VALUE，多个用 》 分隔；校验名称并拒绝重复键
     seen_env = set()
     for item in p.preset_envs.split(ENV_PRESET_SEPARATOR):
         item = item.strip()
@@ -448,7 +489,7 @@ def validate(p):
         if not sep:
             raise ParamError(
                 f"预设环境变量必须为 KEY=VALUE 形式: {item!r}"
-                "（多个变量用 》》 分隔）"
+                "（多个变量用 》 分隔）"
             )
         if not ENV_NAME_RE.match(key):
             raise ParamError(f"预设环境变量名非法: {key!r}")
@@ -470,9 +511,18 @@ def validate(p):
             "app_source_dir 不支持 ~ 展开，请写绝对路径或在应用根目录使用 '.'"
         )
     if p.app_port:
-        if not p.app_port.isdigit() or not 1 <= int(p.app_port) <= 65535:
-            raise ParamError(f"app_port 必须是 1-65535 的整数: {p.app_port!r}")
-        p.app_port = str(int(p.app_port))
+        parts = p.app_port.split(":")
+        if len(parts) > 2 or not all(
+            x.isdigit() and 1 <= int(x) <= 65535 for x in parts
+        ):
+            raise ParamError(
+                "app_port 必须是 1-65535 的端口号，或 host:container 端口映射"
+                f"（如 3000:3000）: {p.app_port!r}"
+            )
+        if len(parts) == 1:
+            p.app_port = f"{int(parts[0])}:{int(parts[0])}"
+        else:
+            p.app_port = f"{int(parts[0])}:{int(parts[1])}"
     for path in p.env_file_list:
         if path.startswith("~"):
             raise ParamError(f"env_file 不支持 ~ 展开: {path!r}")

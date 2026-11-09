@@ -182,9 +182,11 @@ def _base_mapping(p):
         # 用户包 + 预装组件（lucide / oracledb）的合并清单
         "PIP_PACKAGES_LINES": "\n".join(p.preinstall_pip_packages),
         "DEV_PIP_TOOLS": " ".join(p.dev_pip_tools),
-        # ---- Oracle（客户端由 compose 从宿主机挂载，镜像只装依赖与变量） ----
-        "ORACLE_ENABLED": "1" if p.enable_oracle_instantclient else "0",
+        # ---- Oracle（runtime_deps_only：客户端由 compose 挂载；full：客户端内置） ----
+        "ORACLE_MODE": p.oracle_instantclient_mode,
+        "ORACLE_ENABLED": "1" if p.oracle_enabled else "0",
         "ORACLE_CLIENT_DIR": p.oracle_client_dir,
+        "ORACLE_COMPOSE_HINT": _oracle_compose_hint(p),
         "EXTRA_VOLUMES": _extra_volumes(p),
         "APP_ENV_BLOCK": _env_block(p),
         # ---- Node.js / npm 前端离线开发 ----
@@ -220,14 +222,29 @@ def _custom_install_block(cmd):
 
 
 def _oracle_block(p):
-    """Oracle Instant Client 依赖/环境变量块（勾选 enable_oracle_instantclient 时）。
+    """Oracle Instant Client 块。
 
-    客户端本体不下载进镜像：只安装 libaio 等运行库并配置环境变量，客户端由
-    compose 从宿主机只读挂载到 ORACLE_CLIENT_DIR（同一服务器多容器共用）。
+    - runtime_deps_only：只装 libaio 等运行库并配置环境变量，客户端由
+      compose 从宿主机只读挂载到 ORACLE_CLIENT_DIR（同一服务器多容器共用）；
+    - full：运行时依赖 + 构建期从 Oracle 官方直链下载 Basic 包解压进镜像
+      （参考 https://github.com/wl-xiang/oracle2excel/blob/main/Dockerfile）。
     """
-    if not p.enable_oracle_instantclient:
+    if not p.oracle_enabled:
         return ""
+    if p.oracle_full:
+        return _load("Dockerfile.oracle.full.tmpl")
     return _load("Dockerfile.oracle.tmpl")
+
+
+def _oracle_compose_hint(p):
+    """compose 模板头部的 Oracle 挂载变量说明（仅 runtime_deps_only 模式）。"""
+    if not p.oracle_client_mount:
+        return ""
+    return (
+        f"#   ${{ORACLE_CLIENT_DIR:-{p.oracle_client_dir}}}\n"
+        "#                         -> Oracle Instant Client 宿主机目录"
+        "（runtime_deps_only）\n"
+    )
 
 
 def _extra_volumes(p):
@@ -248,7 +265,7 @@ def _escape_dollar(value):
 def _env_map(p):
     """app/dev 服务的 environment：Oracle 默认变量 + 预设环境变量（后者覆盖）。"""
     env = {}
-    if p.enable_oracle_instantclient:
+    if p.oracle_enabled:
         env["ORACLE_HOME"] = p.oracle_client_dir
         env["LD_LIBRARY_PATH"] = p.oracle_client_dir
         env["TNS_ADMIN"] = "/app"
@@ -402,13 +419,14 @@ def _app_options_block(p):
     """app 服务的端口发布、env_file 与预设环境变量。"""
     lines = []
     if p.has_app_port:
+        host_port, container_port = p.app_port_parts
         if p.enable_nginx:
-            # 已由 nginx 反代，app 只对容器网络暴露，避免与宿主机端口冲突
+            # 已由 nginx 反代，app 只对容器网络暴露容器端口，避免与宿主机端口冲突
             lines.append("    expose:\n")
-            lines.append(f"      - \"{p.app_port}\"\n")
+            lines.append(f"      - \"{container_port}\"\n")
         else:
             lines.append("    ports:\n")
-            lines.append(f"      - \"{p.app_port}:{p.app_port}\"\n")
+            lines.append(f"      - \"{host_port}:{container_port}\"\n")
     if p.env_file_list:
         lines.append("    env_file:\n")
         # env 文件相对应用根目录（docker-compose.yml 由 install.sh 复制到项目根，
@@ -486,8 +504,8 @@ def render_compose(p):
 
 
 def render_nginx_conf(p):
-    """nginx 反代到 app:<app_port>；仅在启用 nginx 且指定 app_port 时生成。"""
-    return _sub(_load("nginx.conf.tmpl"), {"APP_PORT": p.app_port})
+    """nginx 反代到 app:<容器端口>；仅在启用 nginx 且指定 app_port 时生成。"""
+    return _sub(_load("nginx.conf.tmpl"), {"APP_PORT": p.app_container_port})
 
 
 def render_makefile(p):
@@ -531,10 +549,18 @@ def render_main_py():
 
 
 def _oracle_notice_block(p):
-    """install.sh 中的 Oracle 客户端配置提示（enable_oracle_instantclient 时）。"""
-    if not p.enable_oracle_instantclient:
+    """install.sh 中的 Oracle Instant Client 提示。"""
+    if not p.oracle_enabled:
         return ""
     d = p.oracle_client_dir
+    if p.oracle_full:
+        return f'''
+echo ""
+printf '%s\\n' "${{C_BOLD}}Oracle Instant Client 19（本包已完整安装）${{C_RESET}}"
+note "客户端（Basic 包）与运行时依赖已打进镜像：ORACLE_HOME={d}"
+note "无需宿主机挂载客户端；验证：docker compose run --rm app python -c \\"import oracledb; oracledb.init_oracle_client(); print('OCI OK')\\""
+note "升级客户端需重新构建镜像（full 模式），或改用 runtime_deps_only 模式从宿主机挂载"
+'''
     return f'''
 echo ""
 printf '%s\\n' "${{C_BOLD}}Oracle Instant Client（本包已启用；客户端不在镜像内，由 compose 从宿主机挂载）${{C_RESET}}"
@@ -582,9 +608,36 @@ def render_install_sh(p, out_file):
 
 
 def _oracle_html_section(p):
-    if not p.enable_oracle_instantclient:
+    if not p.oracle_enabled:
         return ""
     d = p.oracle_client_dir
+    if p.oracle_full:
+        return f"""
+    <section class="card">
+      <h2><span class="step-dot">06</span>Oracle Instant Client（本包已完整安装）</h2>
+      <p>镜像已包含 <strong>Instant Client 19 Basic</strong>（构建期从 Oracle 官方直链下载）
+      与运行依赖 <code>libaio1</code> / <code>libnsl2</code>，并配置
+      <code>ORACLE_HOME={d}</code> / <code>LD_LIBRARY_PATH</code> /
+      <code>TNS_ADMIN</code>。客户端随镜像分发，<strong>无需宿主机挂载</strong>。</p>
+
+      <div class="step">
+        <div class="step-head">
+          <span class="step-badge">1</span>
+          <div>
+            <h3>验证 OCI 可用</h3>
+            <p>输出 <code>OCI OK</code> 即 Thick 模式加载成功。</p>
+          </div>
+        </div>
+        <div class="codeblock">
+          <div class="codebar"><span class="code-label">项目根目录</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
+          <pre><code>docker compose run --rm app python -c "import oracledb; oracledb.init_oracle_client(); print('OCI OK')"</code></pre>
+        </div>
+      </div>
+
+      <div class="tip"><strong>注意：</strong>客户端已固定在镜像内，升级客户端需要重新构建镜像
+      （或改用 <code>runtime_deps_only</code> 模式，由宿主机挂载客户端）。</div>
+    </section>
+"""
     return f"""
     <section class="card">
       <h2><span class="step-dot">06</span>Oracle Instant Client（本包已启用）</h2>
@@ -653,7 +706,7 @@ def _npm_html_section(p):
     if not p.enable_node:
         return ""
     d = p.npm_packages_dir
-    step_no = "07" if p.enable_oracle_instantclient else "06"
+    step_no = "07" if p.oracle_enabled else "06"
     return f"""
     <section class="card">
       <h2><span class="step-dot">{step_no}</span>前端离线开发（Node.js / npm）</h2>
@@ -697,7 +750,7 @@ def _npm_html_section(p):
           <div>
             <h3>启动前端开发服务器</h3>
             <p>推荐把构建参数 <code>prod_command</code> 设为
-            <code>npm run dev -- --host 0.0.0.0</code>、<code>app_port</code> 设为前端端口
+            <code>npm run dev -- --host 0.0.0.0</code>、<code>app_port</code> 设为前端端口映射
             （vite 5173 / webpack 8080），<code>make up</code> 即带宿主机端口映射并支持热更新。</p>
           </div>
         </div>
@@ -735,9 +788,24 @@ def render_readme_html(p, out_file):
 
 
 def _oracle_readme_section(p):
-    if not p.enable_oracle_instantclient:
+    if not p.oracle_enabled:
         return ""
     d = p.oracle_client_dir
+    if p.oracle_full:
+        return f"""
+## Oracle Instant Client（已完整安装进镜像）
+
+镜像已包含 Instant Client 19 Basic（构建期从 Oracle 官方直链下载）与运行依赖
+`libaio1` / `libnsl2`，并设置 `ORACLE_HOME={d}` / `LD_LIBRARY_PATH` /
+`TNS_ADMIN`。客户端随镜像分发，无需宿主机挂载。
+
+验证：
+```bash
+docker compose run --rm app python -c "import oracledb; oracledb.init_oracle_client(); print('OCI OK')"
+```
+输出 `OCI OK` 即 Thick 模式加载成功。升级客户端需重新构建镜像；如需在宿主机
+替换客户端，请重新构建时选择 `runtime_deps_only` 模式。
+"""
     return f"""
 ## Oracle Instant Client（客户端由宿主机挂载，不在镜像内）
 
@@ -786,7 +854,7 @@ def _npm_readme_section(p):
    等价于容器内 `npm install --offline {NPM_PACKAGES_CONTAINER_DIR}/*.tgz`。
 3. 开发调试（二选一）：
    - 推荐：构建参数 `prod_command` 设为 `npm run dev -- --host 0.0.0.0`，
-     `app_port` 设为前端端口（vite 5173 / webpack 8080），`make up` 即带
+     `app_port` 设为前端端口映射（vite `5173:5173` / webpack `8080:8080`），`make up` 即带
      宿主机端口映射；源码经 `/app` 挂载，支持热更新；
    - 临时：`docker compose run --rm -p 5173:5173 dev npm run dev -- --host 0.0.0.0`
      （`make shell` 进入容器手动启动时需要自行发布端口）。
@@ -823,9 +891,13 @@ def render_src_readme(p):
     else:
         dev_note = "- 本次未构建 dev 镜像，`make shell / lint / compile / test` 目标不可用。"
 
-    if p.enable_oracle_instantclient:
+    if p.oracle_full:
         oracle_summary = (
-            f"已启用（客户端由 compose 从宿主机只读挂载到 `{p.oracle_client_dir}`）"
+            f"已完整安装（客户端内置在镜像，ORACLE_HOME=`{p.oracle_client_dir}`）"
+        )
+    elif p.oracle_enabled:
+        oracle_summary = (
+            f"仅运行时依赖（客户端由 compose 从宿主机只读挂载到 `{p.oracle_client_dir}`）"
         )
     else:
         oracle_summary = "未启用"

@@ -58,7 +58,7 @@ def main():
           f"build_dev_image={p.build_dev_image} dev_image_only={p.dev_image_only}")
     print(f"  nginx={p.enable_nginx}(depends={p.app_depends_on_nginx}) "
           f"postgres={p.enable_postgres}(depends={p.app_depends_on_postgres})")
-    print(f"  lucide={p.enable_lucide} oracle_instantclient={p.enable_oracle_instantclient}")
+    print(f"  lucide={p.enable_lucide} oracle_instantclient={p.oracle_instantclient_mode}")
     print(f"  preset_envs={[k for k, _v in p.preset_env_pairs]}")
     print(f"  node={p.enable_node}(v{p.node_version}) npm_packages={p.npm_package_list} "
           f"npm_packages_dir={p.npm_packages_dir}")

@@ -17,26 +17,10 @@ on:
         required: true
         default: '3.13'
         options:
+          - '3.10'
+          - '3.11'
           - '3.12'
           - '3.13'
-      glibc_version:
-        description: 'Target glibc version (controls the manylinux tag used by pip download)'
-        type: choice
-        required: true
-        default: '2.28'
-        options:
-          - '2.17'
-          - '2.28'
-          - '2.34'
-      pip_mirror:
-        description: 'Pip index mirror'
-        type: choice
-        required: true
-        default: 'thu'
-        options:
-          - 'pypi.org'
-          - 'aliyun'
-          - 'thu'
       pip_packages:
         description: 'Pip packages, separated by $ (e.g. numpy$pandas$requests). Leave empty for no extra packages.'
         type: string
@@ -58,12 +42,16 @@ on:
         required: true
         default: false
       enable_oracle_instantclient:
-        description: 'Install Oracle Instant Client runtime deps (libaio) + env vars; the client itself is bind-mounted from the host at /opt/oracle/instantclient19 by docker-compose (shared by all containers)'
-        type: boolean
+        description: 'Oracle Instant Client 19 mode: none = install nothing; runtime_deps_only = runtime deps (libaio1/libnsl2) + env vars only, the client itself is bind-mounted from the host at /opt/oracle/instantclient19 by docker-compose; full = install the client + runtime deps into the image (downloaded at build time from the official Oracle URL)'
+        type: choice
         required: true
-        default: false
+        default: 'none'
+        options:
+          - 'none'
+          - 'runtime_deps_only'
+          - 'full'
       preset_envs:
-        description: 'Preset env vars injected into app/dev services, multiple separated by 》》 (e.g. DB_HOST=10.0.0.1》》DB_PORT=1521)'
+        description: 'Preset env vars injected into app/dev services, multiple separated by a single 》 (e.g. DB_HOST=10.0.0.1》DB_PORT=1521)'
         type: string
         required: false
         default: ''
@@ -72,28 +60,13 @@ on:
         type: boolean
         required: true
         default: false
-      node_version:
-        description: 'Node.js version (use the same value in the Npm Download workflow)'
-        type: choice
-        required: true
-        default: '20'
-        options:
-          - '18'
-          - '20'
-          - '22'
-          - '24'
       npm_packages:
         description: 'npm packages installed globally at build time, separated by $ (e.g. vite$webpack$webpack-cli$vue$react). Requires enable_node.'
         type: string
         required: false
         default: ''
-      npm_registry:
-        description: 'npm registry mirror: npmmirror (taobao) | Tencent | Huawei | THU (tuna) | USTC | Official (npmjs.org), or a custom URL starting with http(s)://'
-        type: string
-        required: true
-        default: 'npmmirror (taobao)'
       npm_packages_dir:
-        description: 'Host dir mounted read-only at /opt/npm-packages (the Npm Download artifact packages/ folder); relative to project root or absolute'
+        description: 'Host folder holding the Npm Download artifact (its packages/ content: *.tgz + package.json). It is mounted read-only at /opt/npm-packages so `make npm-install` can install frontend dependencies offline. Relative to the project root or absolute. Requires enable_node.'
         type: string
         required: true
         default: 'packages'
@@ -125,7 +98,7 @@ on:
         description: 'Image name prefix (produces <prefix>:prod-<tag> and <prefix>:dev-<tag>)'
         type: string
         required: true
-        default: 'devcontainer'
+        default: 'mydevc1'
       image_tag:
         description: 'Image tag suffix: latest (overwrites on each build) or build timestamp (UTC+8)'
         type: choice
@@ -140,12 +113,12 @@ on:
         required: true
         default: '.'
       app_port:
-        description: 'Port the app listens on inside the container (empty = no port mapping; with nginx it is reverse-proxied)'
+        description: 'App port mapping "host:container" (e.g. 3000:3000); a single port maps the same host port. Empty = no port mapping. With nginx the app is reverse-proxied and only the container port is exposed on the app network.'
         type: string
         required: false
-        default: ''
+        default: '3000:3000'
       env_file:
-        description: 'Env file(s) injected into the app service, comma/space separated (e.g. .env)'
+        description: 'Env file(s) whose variables are injected into the app service (same as docker compose env_file), comma/space separated and relative to the project root or absolute (e.g. .env). Empty = none.'
         type: string
         required: false
         default: ''
@@ -179,9 +152,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: devcontainer-pip-${{ inputs.platform }}-py${{ inputs.python_version }}-${{ inputs.glibc_version }}-${{ inputs.pip_packages }}
+          key: devcontainer-pip-${{ inputs.platform }}-py${{ inputs.python_version }}-${{ inputs.pip_packages }}
           restore-keys: |
-            devcontainer-pip-${{ inputs.platform }}-py${{ inputs.python_version }}-${{ inputs.glibc_version }}-
+            devcontainer-pip-${{ inputs.platform }}-py${{ inputs.python_version }}-
 
       # 无需 QEMU：runner 架构已与目标平台一致（amd64 → x86_64 Runner，
       # arm64 → ubuntu-24.04-arm），docker build 全程原生执行
@@ -193,8 +166,9 @@ jobs:
         env:
           PLATFORM: ${{ inputs.platform }}
           PYTHON_VERSION: ${{ inputs.python_version }}
-          GLIBC_VERSION: ${{ inputs.glibc_version }}
-          PIP_MIRROR: ${{ inputs.pip_mirror }}
+          # glibc / pip 源 / Node 版本 / npm 源固定，不再暴露为 workflow 输入
+          GLIBC_VERSION: '2.28'
+          PIP_MIRROR: 'pypi.org'
           PIP_PACKAGES: ${{ inputs.pip_packages }}
           APT_PACKAGES: ${{ inputs.apt_packages }}
           CUSTOM_INSTALL_CMD: ${{ inputs.custom_install_cmd }}
@@ -202,10 +176,9 @@ jobs:
           ENABLE_ORACLE_INSTANTCLIENT: ${{ inputs.enable_oracle_instantclient }}
           PRESET_ENVS: ${{ inputs.preset_envs }}
           ENABLE_NODE: ${{ inputs.enable_node }}
-          NODE_VERSION: ${{ inputs.node_version }}
+          NODE_VERSION: '24'
           NPM_PACKAGES: ${{ inputs.npm_packages }}
-          NPM_REGISTRY: ${{ startsWith(inputs.npm_registry, 'http') && 'Other (custom URL)' || inputs.npm_registry }}
-          NPM_CUSTOM_REGISTRY_URL: ${{ startsWith(inputs.npm_registry, 'http') && inputs.npm_registry || '' }}
+          NPM_REGISTRY: 'Official (npmjs.org)'
           NPM_PACKAGES_DIR: ${{ inputs.npm_packages_dir }}
           ENABLE_NGINX: ${{ contains(inputs.sidecars, 'nginx') }}
           ENABLE_POSTGRES: ${{ contains(inputs.sidecars, 'postgres') }}
@@ -346,7 +319,7 @@ jobs:
       # Oracle / 前端（Node/npm）参数联动校验：确保生成物真的按参数接线
       - name: Verify oracle / npm wiring
         env:
-          ORACLE_ENABLED: ${{ inputs.enable_oracle_instantclient }}
+          ORACLE_MODE: ${{ inputs.enable_oracle_instantclient }}
           NODE_ENABLED: ${{ inputs.enable_node }}
           DEV_ENABLED: ${{ inputs.build_dev_image || inputs.dev_image_only }}
           SRC_TGZ: ${{ steps.build.outputs.src_tgz }}
@@ -358,7 +331,7 @@ jobs:
           tar xzf "$SRC_TGZ" -O devcontainer-src/Dockerfile > /tmp/Dockerfile
           tar xzf "$SRC_TGZ" -O devcontainer-src/Makefile > /tmp/Makefile
 
-          if [ "$ORACLE_ENABLED" = "true" ]; then
+          if [ "$ORACLE_MODE" = "runtime_deps_only" ]; then
             grep -q 'ORACLE_CLIENT_DIR:-/opt/oracle/instantclient19' /tmp/compose.tpl \
               || { echo "::error::compose 模板缺少 Oracle 客户端挂载"; exit 1; }
             grep -q 'ORACLE_HOME' /tmp/compose.tpl \
@@ -366,14 +339,28 @@ jobs:
             grep -q 'ORACLE_HOME=/opt/oracle/instantclient19' /tmp/Dockerfile \
               || { echo "::error::Dockerfile 缺少 Oracle 环境变量"; exit 1; }
             if grep -q 'instantclient-basic' /tmp/Dockerfile; then
-              echo "::error::Oracle 客户端不应下载进镜像（应由 compose 挂载）"
+              echo "::error::runtime_deps_only 模式不应把 Oracle 客户端下载进镜像"
               exit 1
             fi
             grep -q 'ORACLE_CLIENT_DIR' "$INSTALL_SH" \
               || { echo "::error::install.sh 缺少 Oracle 配置提示"; exit 1; }
             grep -q 'ORACLE_CLIENT_DIR' "$README_HTML" \
               || { echo "::error::readme.html 缺少 Oracle 配置提示"; exit 1; }
-            echo "oracle wiring OK"
+            echo "oracle wiring OK (runtime_deps_only)"
+          elif [ "$ORACLE_MODE" = "full" ]; then
+            grep -q 'instantclient-basic' /tmp/Dockerfile \
+              || { echo "::error::full 模式 Dockerfile 缺少 Oracle 客户端下载"; exit 1; }
+            grep -q 'ORACLE_HOME=/opt/oracle/instantclient19' /tmp/Dockerfile \
+              || { echo "::error::Dockerfile 缺少 Oracle 环境变量"; exit 1; }
+            if grep -q 'ORACLE_CLIENT_DIR' /tmp/compose.tpl; then
+              echo "::error::full 模式客户端已打进镜像，compose 不应再挂载"
+              exit 1
+            fi
+            grep -q 'ORACLE_HOME' "$INSTALL_SH" \
+              || { echo "::error::install.sh 缺少 Oracle 安装提示"; exit 1; }
+            grep -q 'Oracle Instant Client' "$README_HTML" \
+              || { echo "::error::readme.html 缺少 Oracle 安装提示"; exit 1; }
+            echo "oracle wiring OK (full)"
           fi
 
           if [ "$NODE_ENABLED" = "true" ]; then
