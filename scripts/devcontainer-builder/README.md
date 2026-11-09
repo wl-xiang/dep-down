@@ -39,7 +39,7 @@ scripts/devcontainer-builder/
     └── README.src.tmpl            # src 产物内的快速上手说明（项目根为 README-devcontainer.md）
 ```
 
-## 环境变量（与 workflow inputs 一一对应）
+## 环境变量（workflow 会把 inputs 展开映射为这些变量）
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
@@ -56,7 +56,7 @@ scripts/devcontainer-builder/
 | `ENABLE_NODE` | `false` | 镜像内置 Node.js + npm（前端离线开发） |
 | `NODE_VERSION` | `20` | `18` / `20` / `22` / `24` |
 | `NPM_PACKAGES` | 空 | `$` 分隔的全局 npm 包（需 `ENABLE_NODE=true`） |
-| `NPM_REGISTRY` | `npmmirror (taobao)` | 与 npm_download.yml 相同的镜像源选项 |
+| `NPM_REGISTRY` | `npmmirror (taobao)` | 内置镜像源名称；workflow 也可直接填自定义 URL（自动映射为 `Other (custom URL)`） |
 | `NPM_CUSTOM_REGISTRY_URL` | 空 | `NPM_REGISTRY=Other (custom URL)` 时必填 |
 | `NPM_PACKAGES_DIR` | `packages` | Npm Download 产物目录，只读挂载到 `/opt/npm-packages` |
 | `ENABLE_NGINX` | `false` | 启用 nginx 服务 |
