@@ -44,13 +44,18 @@ def build_markdown(p, results):
     out.append(f"| pip 镜像源 | `{p.pip_mirror}` ({p.mirror_url}) |")
     out.append(f"| wheels 数量 | {wheels_count} |")
     out.append(f"| 预装 lucide 图标库 (pip) | {_yes_no(p.enable_lucide)} |")
-    if p.enable_oracle_instantclient:
+    if p.oracle_full:
         oracle_mode = (
-            f"启用（客户端不在镜像内，由 compose 从宿主机只读挂载到 "
+            "完整安装（客户端已打进镜像，"
+            f"`ORACLE_HOME={p.oracle_client_dir}`）"
+        )
+    elif p.oracle_enabled:
+        oracle_mode = (
+            "仅运行时依赖（客户端由 compose 从宿主机只读挂载到 "
             f"`{p.oracle_client_dir}`）"
         )
     else:
-        oracle_mode = "未启用"
+        oracle_mode = "未启用（none）"
     out.append(f"| Oracle Instant Client 19 | {oracle_mode} |")
     if p.enable_node:
         node_mode = f"Node.js {p.node_version} + npm"
@@ -73,7 +78,7 @@ def build_markdown(p, results):
     else:
         image_mode = "仅 prod 镜像"
     out.append(f"| 镜像模式 | {image_mode} |")
-    out.append(f"| 应用监听端口 | {('`' + p.app_port + '`') if p.has_app_port else '(未指定)'} |")
+    out.append(f"| 应用端口 (host:container) | {('`' + p.app_port + '`') if p.has_app_port else '(未指定)'} |")
     out.append(f"| env_file | {', '.join(p.env_file_list) if p.env_file_list else '(无)'} |")
     out.append(f"| SELinux 重打标签 (:z) | {_yes_no(p.selinux_relabel)} |")
     out.append("")
@@ -85,7 +90,7 @@ def build_markdown(p, results):
             note = ""
             if x == "lucide" and p.enable_lucide:
                 note = "（预装：SVG 图标库）"
-            elif x.startswith("oracledb") and p.enable_oracle_instantclient:
+            elif x.startswith("oracledb") and p.oracle_enabled:
                 note = "（预装：配合 Instant Client 19 连 Oracle 11g）"
             out.append(f"- `{x}`{note}")
     else:
@@ -213,9 +218,10 @@ def build_markdown(p, results):
                "下直接运行任何脚本。")
     out.append("")
     if p.has_app_port:
-        out.append(f"应用端口 `{p.app_port}`: 已在 compose 中配置"
-                   + ("（由 nginx 反代，仅容器网络暴露）。"
-                      if p.enable_nginx else "（宿主机同端口映射）。"))
+        host_port, container_port = p.app_port_parts
+        out.append(f"应用端口 `{host_port}:{container_port}`（host:container）: 已在 compose 中配置"
+                   + (f"（app 仅容器网络 expose {container_port}，由 nginx 反代）。"
+                      if p.enable_nginx else "（宿主机端口映射）。"))
         out.append("")
     if p.enable_postgres:
         out.append("postgres 已启用: 连接串 "
@@ -225,12 +231,26 @@ def build_markdown(p, results):
     if p.enable_nginx:
         out.append("nginx 已启用: 宿主机 `http://<host>:8080` → 容器 80 端口。")
         if p.has_app_port:
-            out.append(f"已生成 `nginx/conf.d/default.conf`，反代到 `app:{p.app_port}`。")
+            out.append(f"已生成 `nginx/conf.d/default.conf`，反代到 `app:{p.app_container_port}`。")
         else:
             out.append("未指定 app_port，nginx 未生成反代配置，需自行挂载 "
                        "`nginx/conf.d/default.conf`。")
         out.append("")
-    if p.enable_oracle_instantclient:
+    if p.oracle_full:
+        out.append("### Oracle Instant Client（已完整安装进镜像）")
+        out.append("")
+        out.append("镜像内**包含** Instant Client 19 Basic（构建期从 Oracle 官方直链"
+                   "下载）与运行依赖 `libaio1` / `libnsl2`，并配置"
+                   f" `ORACLE_HOME={p.oracle_client_dir}` / `LD_LIBRARY_PATH` /"
+                   " `TNS_ADMIN`。客户端随镜像分发，无需宿主机挂载：")
+        out.append("")
+        out.append("```bash")
+        out.append("# 验证 Thick 模式加载成功（输出 OCI OK）")
+        out.append('docker compose run --rm app python -c "import oracledb; '
+                   "oracledb.init_oracle_client(); print('OCI OK')\"")
+        out.append("```")
+        out.append("")
+    elif p.oracle_enabled:
         out.append("### Oracle Instant Client（客户端由宿主机挂载）")
         out.append("")
         out.append("镜像内**不包含**客户端，仅安装 `libaio1` / `libnsl2` 并配置"
@@ -261,7 +281,7 @@ def build_markdown(p, results):
         out.append("# 2. 离线安装依赖到 /app")
         out.append("make npm-install")
         out.append("# 3. 启动前端开发服务器：把 prod_command 设为 npm run dev -- --host 0.0.0.0、")
-        out.append("#    app_port 设为 5173（vite）/ 8080（webpack）后 make up；临时调试可用：")
+        out.append("#    app_port 设为 5173:5173（vite）/ 8080:8080（webpack）后 make up；临时调试可用：")
         out.append("#    docker compose run --rm -p 5173:5173 dev npm run dev -- --host 0.0.0.0")
         out.append("```")
         out.append("")
