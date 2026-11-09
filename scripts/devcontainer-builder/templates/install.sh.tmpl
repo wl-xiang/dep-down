@@ -7,6 +7,7 @@
 #   bash install.sh --load /path/to/your/project-root
 #                                                  # 安装开始前自动 docker load
 #                                                  # 同目录的镜像归档 tgz
+#   bash install.sh -h | --help                    # 查看用法、选项与退出码
 # （Artifact 的 zip 解压后可能丢失可执行权限，统一用 `bash install.sh` 调用）
 #
 # 作用：
@@ -39,19 +40,50 @@ ok()   { printf '%s\n' "  ${C_GREEN}✓${C_RESET} $*"; }                  # 单�
 note() { printf '%s\n' "  ${C_YELLOW}$*${C_RESET}"; }                   # 提示（黄）
 
 usage() {
-    echo "${C_BOLD}用法:${C_RESET} bash $0 [--load] <SRC_ROOT>"
-    echo "  SRC_ROOT = 你的项目根目录（必须已存在；根目录操作文件安装到 SRC_ROOT，"
-    echo "             原始副本与模板安装到 <SRC_ROOT>/docs/devcontainer）"
-    echo "  --load   安装开始前自动在脚本所在目录查找 devcontainer-docker-images_*.tgz"
-    echo "           并 docker load 导入（等效于手动 docker load -i 该归档）"
-    exit 2
+    local code=${1:-2}
+    cat <<EOF
+${C_BOLD}用法:${C_RESET} bash $0 [--load] <SRC_ROOT>
+
+在项目根目录安装离线 devcontainer 开发环境：解压源码/模板包，安装 Makefile、
+build.sh、Dockerfile、docker-compose.yml 以及 .dockerignore / .gitignore。
+
+${C_BOLD}参数:${C_RESET}
+  SRC_ROOT              项目根目录（必须已存在）。根目录操作文件安装到 SRC_ROOT，
+                        原始副本与模板安装到 <SRC_ROOT>/docs/devcontainer。
+
+${C_BOLD}选项:${C_RESET}
+  --load                安装开始前自动在脚本所在目录查找
+                        devcontainer-docker-images_*.tgz 并执行 docker load
+                        （等效于手动 docker load -i 该归档）。
+  -h, --help            显示本帮助并退出。
+
+${C_BOLD}示例:${C_RESET}
+  bash install.sh ../              # 在项目根目录的 dist/ 中安装到上一级项目根
+  bash install.sh --load ../       # 同上，并在安装前自动导入镜像
+  bash install.sh -h               # 查看本帮助
+
+${C_BOLD}退出码:${C_RESET}
+  0  安装成功（或使用 -h/--help 查看帮助）
+  1  安装失败（前置校验不通过、缺少 tgz、docker load 失败等）
+  2  参数错误
+
+${C_BOLD}说明:${C_RESET}
+  <SRC_ROOT>/docs/devcontainer 下是原始副本，仅用于把改坏的根目录文件
+  复制回去重置；请勿在该目录下运行任何脚本。
+EOF
+    exit "$code"
 }
 
 LOAD_IMAGES=0
-if [ "${1:-}" = "--load" ]; then
-    LOAD_IMAGES=1
-    shift
-fi
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -h|--help) usage 0 ;;
+        --load)    LOAD_IMAGES=1; shift ;;
+        --)        shift; break ;;
+        -*)        err "未知选项: $1"; usage ;;
+        *)         break ;;
+    esac
+done
 [ "$#" -eq 1 ] || usage
 SRC_ROOT=$1
 [ -d "$SRC_ROOT" ] || { err "SRC_ROOT 不是目录: $SRC_ROOT"; exit 1; }
