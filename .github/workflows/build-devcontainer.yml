@@ -402,7 +402,8 @@ jobs:
         run: chmod +x "${{ steps.build.outputs.install_sh }}"
 
       # Artifacts 只能是 zip 封装：设 compression-level 0 让 zip 只做存储，
-      # 避免 tgz 再被 zip 二次压缩。唯一产物 <image_prefix>_devcontainer_<时间戳>，
+      # 避免 tgz 再被 zip 二次压缩。唯一产物
+      # <image_prefix>_devcontainer_<架构>_<时间戳>（架构 amd64/arm64），
       # zip 内含镜像归档 tgz、src tgz、install.sh 与 readme.html 四个文件
       - name: Upload bundle artifact (docker images tgz + src tgz + install.sh + readme.html)
         uses: actions/upload-artifact@v4

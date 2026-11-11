@@ -270,8 +270,8 @@
       <div class="table-wrap">
         <table>
           <tr><th>#</th><th>文件</th><th>说明</th></tr>
-          <tr><td>1</td><td><code>devcontainer-docker-images_{{TS}}.tgz</code></td><td>镜像归档（docker load 用）</td></tr>
-          <tr><td>2</td><td><code>devcontainer-src_{{TS}}.tgz</code></td><td>源码 / 模板包</td></tr>
+          <tr><td>1</td><td><code>devcontainer-docker-images_{{ARCH}}_{{TS}}.tgz</code></td><td>镜像归档（docker load 用）</td></tr>
+          <tr><td>2</td><td><code>devcontainer-src_{{ARCH}}_{{TS}}.tgz</code></td><td>源码 / 模板包</td></tr>
           <tr><td>3</td><td><code>install.sh</code></td><td>安装脚本</td></tr>
           <tr><td>4</td><td><code>readme.html</code></td><td>本说明</td></tr>
         </table>
@@ -370,7 +370,7 @@
         </div>
         <div class="codeblock">
           <div class="codebar"><span class="code-label">dist/ · 导入镜像</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
-          <pre><code>docker load -i devcontainer-docker-images_{{TS}}.tgz</code></pre>
+          <pre><code>docker load -i devcontainer-docker-images_{{ARCH}}_{{TS}}.tgz</code></pre>
         </div>
       </div>
 

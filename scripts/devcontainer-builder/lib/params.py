@@ -235,9 +235,14 @@ class Params:
         return f"{self.image_prefix}-dev:{self.tag}"
 
     @property
+    def arch_label(self):
+        """产物文件名中的架构标签：amd64 / arm64（不含 linux- 前缀）。"""
+        return self.arch
+
+    @property
     def bundle_name(self):
-        """唯一 Artifact 名：<镜像前缀>_devcontainer_<时间戳>。"""
-        return f"{self.image_prefix}_devcontainer_{self.ts}"
+        """唯一 Artifact 名：<镜像前缀>_devcontainer_<架构>_<时间戳>。"""
+        return f"{self.image_prefix}_devcontainer_{self.arch_label}_{self.ts}"
 
     @property
     def app_image(self):

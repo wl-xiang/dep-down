@@ -155,8 +155,10 @@ def _sub(text, mapping):
 
 def _base_mapping(p):
     return {
-        # TS = 构建时间戳（UTC+8，用于产物文件名）；TAG = 镜像 TAG（latest 或时间戳）
+        # TS = 构建时间戳（UTC+8，用于产物文件名）；TAG = 镜像 TAG（latest 或时间戳）；
+        # ARCH = 产物文件名中的架构标签（amd64 / arm64）
         "TS": p.ts,
+        "ARCH": p.arch_label,
         "TAG": p.tag,
         "BUNDLE_NAME": p.bundle_name,
         "PLATFORM": p.platform,

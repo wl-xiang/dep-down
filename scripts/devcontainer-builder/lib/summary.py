@@ -309,7 +309,8 @@ def emit(p, results):
         entries = [
             ("ts", p.ts),
             ("image_tag", p.tag),
-            # 唯一 Artifact 名（GitHub Actions 上传后为 <prefix>_devcontainer_<ts>.zip）
+            # 唯一 Artifact 名（GitHub Actions 上传后为
+            # <prefix>_devcontainer_<arch>_<ts>.zip）
             ("bundle_name", p.bundle_name),
         ]
         src_tgz = results.get("src_tgz")
