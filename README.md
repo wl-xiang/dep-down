@@ -1,10 +1,10 @@
 # Offline Package Downloader
 
-跨平台的 Python 和 npm 离线包下载工具，用于在外网设备上为内网系统下载依赖包。
+跨平台的 Python 和 npm 离线包下载工具，并可在外网构建可直接带进内网运行的 Python 开发环境镜像（DevContainer），用于为内网系统准备依赖包与运行环境。
 
 ## 通过 GitHub Action 自动下载并打包
 
-本仓库提供一个人工触发的 GitHub Actions 工作流 `.github/workflows/pip_download.yml`，你无需克隆仓库或安装环境，直接在 GitHub 网站上即可为指定平台/架构/Python 版本下载 pip wheel 包，并打包成可下载的产物（artifact）。
+本仓库提供一个人工触发的 GitHub Actions 工作流 `.github/workflows/pip_download.yml`，你无需克隆仓库或安装环境，直接在 GitHub 网站上即可为指定平台/架构/Python 版本/glibc 下载 pip wheel 包，并打包成可下载的产物（artifact）。
 
 ### 使用方法（Fork 后用）
 
@@ -22,6 +22,7 @@
 | `platform` | 是 | `linux` / `win` | `linux` | 目标平台 |
 | `arch` | 是 | `x86_64` / `arm64` | `x86_64` | 目标架构 |
 | `python_version` | 是 | `3.6`–`3.14` | `3.10` | 目标 Python 版本 |
+| `glibc_version` | 是 | `2.17` / `2.28` / `2.34` | `2.28` | Linux 目标 glibc 版本（Windows 忽略），决定 manylinux 平台标签 |
 | `pip_mirror` | 是 | `THU (tuna)` / `Aliyun` / `USTC` / `Official (pypi.org)` / `Other (custom URL)` | `THU (tuna)` | pip 镜像源 |
 | `custom_mirror_url` | 否 | 任意 URL | 空 | 仅当 `pip_mirror` 为 `Other (custom URL)` 时必填 |
 | `requirements` | 否 | 文本 | 空 | requirements.txt 内容；留空则使用仓库内的 `scripts/pip/requirements.txt` |
@@ -143,12 +144,33 @@ npm install npm-offline-packages
 - 校验 `packages/` 下存在 `.tgz` 文件，且存在 `packages/package.json`。
 - 基于下载到的全部 `.tgz` 生成 `packages/package.json` 离线安装清单（每个依赖为 `file:./...`）和 `packages/README.md` 使用说明，并将产物归档为顶层 `packages/` 文件夹。
 
+## 通过 GitHub Action 清理工作流运行历史
+
+本仓库提供一个人工触发的工作流 `.github/workflows/cleanup-run-history.yml`，用于按规则清理本仓库的 GitHub Actions 运行历史（删除整条 run，含日志与 Artifact），避免历史记录与存储无限增长。
+
+### 使用方法
+
+1. 进入 **Actions** → **Clean Workflow Run History** → **Run workflow**。
+2. 选择清理依据与保留范围，保持默认的预演模式（`dry_run=true`）运行一次，确认 Summary 中列出的待删记录符合预期。
+3. 再次运行并将 `dry_run` 设为 `false`，真正执行删除。
+
+### 触发参数（Inputs）
+
+| 参数 | 必填 | 取值 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `clean_by` | 是 | `num` / `date` | `num` | 清理依据：按保留条数或按保留天数 |
+| `keep_count` | 否 | 正整数 | `10` | `clean_by=num` 时保留最近 N 条运行记录 |
+| `keep_days` | 否 | 正整数 | `30` | `clean_by=date` 时保留最近 N 天内完成的记录 |
+| `dry_run` | 否 | `true` / `false` | `true` | 预演模式：只打印待删记录，不真正删除 |
+
+> 安全策略：永不删除排队/进行中（`queued` / `in_progress`）的记录，也不删除本工作流自身的运行记录；删除操作需要 `actions: write` 权限。
+
 ## 功能特性
 
 ### Python 包下载 (scripts/pip/pip_download.py)
-- 支持多平台：Linux (manylinux_2_17) 和 Windows
+- 支持多平台：Linux（manylinux_2_17 / 2_28 / 2_34，由 glibc 版本决定）和 Windows
 - 支持多架构：x86_64/amd64、arm64/aarch64
-- 支持多 Python 版本：3.6、3.8-3.13 及后续版本
+- 支持多 Python 版本：3.6–3.14
 - 自动平台标签映射
 - 支持从 requirements.txt 或直接指定包名下载
 - 自动打包功能
@@ -167,8 +189,8 @@ npm install npm-offline-packages
 - jinja2 (用于 npo_fetch.py)
 
 ### npm
-- Node.js 12+
-- npm 6+
+- Node.js 18+（GitHub Actions 可选 18 / 20 / 22 / 24）
+- npm 9+
 - npm-offline-packager (全局安装)
 
 ## 安装依赖
@@ -207,6 +229,9 @@ python scripts/pip/pip_download.py -v 311
 # 指定平台和架构
 python scripts/pip/pip_download.py -p linux -a arm64
 
+# 指定 Linux 目标的 glibc 版本（决定 manylinux 标签）
+python scripts/pip/pip_download.py -g 2.28
+
 # 启用打包
 python scripts/pip/pip_download.py --need-pack
 
@@ -219,7 +244,8 @@ python scripts/pip/pip_download.py requests flask
 Options:
   -p, --platform TEXT       目标平台 [linux, win], 可传入多个
   -a, --arch TEXT           目标架构 [x86_64, amd64, arm64, aarch64]
-  -v, --python-version TEXT Python版本 [36, 38, 39, 310, 311, 312, 313, ...]
+  -v, --python-version TEXT Python版本 [36, 38, 39, 310, 311, 312, 313, 314, ...]
+  -g, --glibc TEXT          Linux 目标 glibc 版本 [2.17, 2.28, 2.34], 仅 Linux 生效
   -d TEXT                   下载目录, 默认值为 ./wheels
   -r TEXT                   依赖文件 [auto, requirements.txt, 自定义文件路径]
   -i, --index, --index-url TEXT
@@ -264,13 +290,15 @@ Options:
 ### .env.pip (scripts/pip/.env.pip)
 ```env
 PLATFORM=linux
-ARCH=x86_64
+ARCH=amd64
 PYTHON_VERSION=312
 D=./wheels
-R=requirements.txt
+R=./requirements.txt
 INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 NEED_PACK=true
 ```
+
+> 如需指定 Linux 目标的 glibc 版本，可在 `.env.pip` 中增加 `GLIBC=2.28`（默认 `2.17`）。
 
 ### .env.npm (scripts/npm/.env.npm)
 ```env
@@ -285,11 +313,14 @@ NEED_PACK=true
 所有工具都遵循以下优先级（从低到高）：
 1. 脚本默认值
 2. 环境配置文件（.env.pip / .env.npm）
-3. 命令行参数
+3. 系统环境变量（如 Actions 注入的 `PLATFORM`、`ARCH`、`PYTHON_VERSION` 等）
+4. 命令行参数
 
 ## 清理工具
 
 ### 清除所有缓存
+不带参数时清除 `wheels`、`packages`、`node_modules`、`tarballs`：
+
 ```bash
 # Linux/Mac
 ./clear.sh
@@ -312,8 +343,11 @@ clear.bat packages node_modules
 ## 内网安装
 
 ### Python 包安装
-1. 解压 `wheels_${PLATFORM}_${ARCH}_py${VERSION}.tar.gz`
-2. 进入解压后的目录
+1. 下载并解压 Action 产物 `wheels_<platform>_<arch>_py<version>.zip`（或本地打包的 `tarballs/wheels_${PLATFORM}_${ARCH}_py${VERSION}.tar.gz`），得到 `wheels/` 目录。
+2. 进入 `wheels/` 目录：
+```bash
+cd wheels
+```
 3. 运行：
 ```bash
 pip install -r requirements.txt
@@ -341,7 +375,8 @@ npm install --offline
 │   └── workflows/
 │       ├── pip_download.yml       # pip 离线下载 Action
 │       ├── npm_download.yml       # npm 离线下载 Action
-│       └── build-devcontainer.yml # 离线开发环境镜像构建 Action
+│       ├── build-devcontainer.yml # 离线开发环境镜像构建 Action
+│       └── cleanup-run-history.yml # 工作流运行历史清理 Action
 ├── docs/                          # 文档目录
 │   ├── npm-offline-package-guide.md
 │   ├── offline-devcontainer.md    # 离线开发环境（build-devcontainer）使用手册
@@ -365,6 +400,7 @@ npm install --offline
 │   │   └── packages.txt           # npm 包列表
 │   └── devcontainer-builder/      # 离线开发环境镜像构建工具
 │       ├── main.py                # 总入口
+│       ├── README.md              # 构建工具说明（参数/模板/本地运行）
 │       ├── lib/                   # params/render/pip/docker/package/summary
 │       └── templates/             # Dockerfile/compose/Makefile 等模板
 ├── .gitignore
