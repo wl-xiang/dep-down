@@ -153,13 +153,19 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   ruff/pytest/compileall 缓存（`.ruff_cache`/`.pytest_cache`/`__pycache__`）
   以 root 属主污染挂载目录。
 - **仅 dev 镜像模式**（`dev_image_only=true`）：Dockerfile 渲染为单阶段 dev
-  镜像，compose 的 app 服务直接使用该 dev 镜像并显式指定 `command`，镜像
-  归档只包含这一个镜像（不再生成 prod 镜像文件）。app/dev 两个服务保留：
+  镜像，compose 的 app 服务直接使用该 dev 镜像，启动命令同样由 compose 的
+  `command` 显式承载（镜像 CMD 为 bash），镜像归档只包含这一个镜像（不再生成
+  prod 镜像文件）。app/dev 两个服务保留：
   prod+dev 模式两服务镜像本就不同，统一模板可避免生成器分支；dev 服务无
   restart/ports/depends_on，工具型 `compose run` 不会误拉起外挂服务。
-- **CMD 而非 ENTRYPOINT**：prod/dev 镜像默认命令均通过 `CMD` 承载，
-  `docker compose up` 时由 compose `command` 覆盖执行 `python main.py`，
-  `docker compose run` 时落到 dev 镜像的 `CMD ["bash"]`，互不冲突。
+- **启动方式显式写入 compose**：prod/dev 镜像默认命令通过 `CMD` 承载
+  （直接 `docker run` 仍可用）；安装生成的 `docker-compose.yml` 在 app 服务
+  上固定写入 `entrypoint: []`（清空镜像 ENTRYPOINT）与 `command`（默认
+  `prod_command`），用户直接改这两行即可调整启动命令，或按模板注释换成自定义
+  启动脚本（挂载 `./my-start.sh` → `entrypoint: ["/bin/bash",
+  "/opt/my-start.sh"]` + `command: []`），均无需重建镜像；
+  `docker compose run --rm app <命令>` 仍按传入命令执行，
+  `make shell` 走 dev 镜像的 `CMD ["bash"]`，互不冲突。
 - **compose run 与 profile**：命令行显式指定的服务会自动激活其 profiles
   （compose v2 行为），因此 `DEV_RUN` 无需 `--profile dev`；但
   `make build`（`compose build`）需要 `--profile dev` 才会构建 dev 服务。

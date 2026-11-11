@@ -72,6 +72,9 @@ make down         # 停止
   容器 `/app`）、`${SRC_ROOT_NAME:-app}` compose 项目名后缀。需要调整时可用
   环境变量覆盖（如 `SRC_ROOT=/path/to/app docker compose up`），或直接改项目
   根目录的 `docker-compose.yml`（`.tpl` 保持原样，留作参考）。
+- app 服务的启动方式已显式写入 `docker-compose.yml`：`entrypoint: []`（清空
+  镜像 ENTRYPOINT）+ `command`（默认构建参数 `prod_command`）。调整启动命令
+  直接改这两行即可，无需重建镜像；换成自定义启动脚本的写法见文件内注释。
 - `.tpl` 后缀确保该模板不会被 docker compose 自动发现，也不会与项目根目录下
   你自己的 compose 配置发生 `-f` / `*.override.yaml` 合并（compose 对 ports
   等列表只做并集、无法通过 override 移除）。
