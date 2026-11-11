@@ -89,7 +89,7 @@ on:
         description: 'prod+dev = build prod + dev images; prod-only = prod only; dev-only = single dev image used for deployment too'
         type: choice
         required: true
-        default: 'prod+dev'
+        default: 'prod-only'
         options:
           - 'prod+dev'
           - 'prod-only'
