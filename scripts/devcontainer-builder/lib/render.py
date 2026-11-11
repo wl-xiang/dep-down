@@ -449,7 +449,7 @@ def _app_options_block(p):
     if p.env_file_list:
         lines.append("    env_file:\n")
         # env 文件相对应用根目录（docker-compose.yml 由 install.sh 复制到项目根，
-        # ${SRC_ROOT:-./} 默认即项目根）；绝对路径原样保留
+        # ${SRC_ROOT:-./src/} 默认为项目根下的 src/ 目录）；绝对路径原样保留
         lines.extend(
             f"      - {json.dumps(_env_file_path(x))}\n" for x in p.env_file_list
         )
@@ -460,7 +460,7 @@ def _app_options_block(p):
 def _env_file_path(path):
     if path.startswith("/"):
         return path
-    return "${SRC_ROOT:-./}/" + path
+    return "${SRC_ROOT:-./src/}/" + path
 
 
 def _depends_on_block(p):
@@ -1072,7 +1072,7 @@ def render_all(p, staging):
         "Dockerfile": render_dockerfile(p),
         # .tpl 后缀：不会被 docker compose 自动发现/被 -f 误用，
         # 由 install.sh 原样复制到项目根目录为 docker-compose.yml
-        # （模板内 ${SRC_ROOT:-./} / ${SRC_ROOT_NAME:-app} 由 compose 运行时解析）
+        # （模板内 ${SRC_ROOT:-./src/} / ${SRC_ROOT_NAME:-app} 由 compose 运行时解析）
         "docker-compose.yml.tpl": render_compose(p),
         "Makefile": render_makefile(p),
         "requirements.txt": render_requirements(p),

@@ -29,6 +29,8 @@ make up (python main.py)
 
 - 已 Fork 本仓库到你的 GitHub 账号（工作流需以你的身份运行）。
 - 内网机器：Docker >= 20.10（建议 23+），且带 compose v2 插件（`docker compose version` 可执行）。
+  仅安装了 `docker-compose`（v1）时，install.sh 会自动把 Makefile 的 `COMPOSE` 改为 `docker-compose`；
+  两者都没有时安装仍可完成，但会提示先安装 docker compose。
 - 内网机器 CPU 架构需与构建时选择的平台一致（amd64 / arm64），否则容器启动报
   `exec format error`。
 - 应用代码放在独立的项目根目录（如 `~/apps/myapp1`）。`install.sh` 会把
@@ -151,9 +153,9 @@ devcontainer-src/
 ```
 
 src 包内**只有 `docker-compose.yml.tpl` 模板，不包含渲染后的
-`docker-compose.yaml`**；模板中的 `${SRC_ROOT:-./}` 与 `${SRC_ROOT_NAME:-app}`
+`docker-compose.yaml`**；模板中的 `${SRC_ROOT:-./src/}` 与 `${SRC_ROOT_NAME:-app}`
 两个环境变量由 docker compose 在运行时以 `:-` 默认值语法解析（默认
-`./` = 项目根目录、项目名后缀 `app`）。启用 Node 时模板还会内置
+`./src/`、项目名后缀 `app`）。启用 Node 时模板还会内置
 `${NPM_PACKAGES_DIR:-./packages}` 只读挂载；Oracle 为 `runtime_deps_only`
 模式时另有 `${ORACLE_CLIENT_DIR:-/opt/oracle/instantclient19}` 只读挂载。
 两者都可在运行时用环境变量覆盖（`full` 模式客户端已打进镜像，不生成挂载）。
@@ -192,13 +194,16 @@ bash install.sh --load ../       # 加 --load：安装开始前自动 docker loa
    解析到该文件所在目录：把 wheel 放进 `wheels/` 后，容器内外均可用
    `pip install -r wheels/requirements.txt <包名>` 离线安装；
 6. 项目根目录没有 `main.py` 且启动命令为默认的 `python main.py` 时，复制
-   占位 `main.py` 到项目根目录（不覆盖已有文件）。
+   占位 `main.py` 到项目根目录（不覆盖已有文件）；
+7. 检测 compose 命令：有 `docker compose` 插件时不改 Makefile；只有
+   `docker-compose` 时把 Makefile 的 `COMPOSE` 改为 `docker-compose`；
+   两者都没有时保持默认，并在结束时给出红色警告。
 
 > 为什么 compose 文件带 `.tpl` 后缀：避免被 docker compose 自动发现或被
 > `-f` 误用，与项目根目录下用户自己的 compose 配置彻底隔离——compose 多
 > 文件合并对 `ports` 等列表只做并集、无法通过 override 移除，`*.override.yaml`
 > 自动合并也会产生同样问题。复制到项目根目录的 `docker-compose.yml` 是
-> compose 实际使用的运行文件，可放心手工修改；`${SRC_ROOT:-./}` /
+> compose 实际使用的运行文件，可放心手工修改；`${SRC_ROOT:-./src/}` /
 > `${SRC_ROOT_NAME:-app}` 也可在运行 `docker compose` 时用环境变量覆盖。
 
 ## 内网使用步骤
@@ -444,8 +449,8 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
   调用）把 src 包解压到 `<项目根>/docs/devcontainer/`，并把模板**原样复制**
   到项目根目录为 `docker-compose.yml`（仅去掉 `.tpl` 后缀，不做渲染）。
   模板中的两个环境变量以 compose 的 `:-` 默认值语法书写、运行时解析：
-  `${SRC_ROOT:-./}` 应用根目录（默认 `./` = docker-compose.yml 所在的项目根
-  目录，挂载为容器 `/app`）、`${SRC_ROOT_NAME:-app}` compose 项目名后缀
+  `${SRC_ROOT:-./src/}` 应用根目录（默认 `./src/` = docker-compose.yml 所在
+  项目根目录下的 src 子目录，挂载为容器 `/app`）、`${SRC_ROOT_NAME:-app}` compose 项目名后缀
   （项目名 = `<image_prefix>-<SRC_ROOT_NAME>`，避免多应用冲突）。需要时可在
   运行 compose 前设置环境变量覆盖（如 `SRC_ROOT=/data/other`）。
 - 项目根目录的 `docker-compose.yml` 是用户可改的副本，`.tpl` 保持原样；

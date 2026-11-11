@@ -14,8 +14,8 @@
 #   1. 在 <SRC_ROOT>/docs/devcontainer 下解压 devcontainer-src_{{ARCH}}_{{TS}}.tgz
 #      （原始副本目录，仅用于把改坏的根目录文件复制回去重置）
 #   2. 把包内 docker-compose.yml.tpl 原样复制到 SRC_ROOT，命名为去掉 .tpl
-#      后缀的 docker-compose.yml（模板内 ${SRC_ROOT:-./} 与
-#      ${SRC_ROOT_NAME:-app} 由 docker compose 运行时解析，默认 ./ 即项目根目录）
+#      后缀的 docker-compose.yml（模板内 ${SRC_ROOT:-./src/} 与
+#      ${SRC_ROOT_NAME:-app} 由 docker compose 运行时解析，默认 ./src/）
 #   3. 把 Makefile / build.sh / Dockerfile.addon(改名为 Dockerfile) /
 #      README.md(改名为 README-devcontainer.md) 复制到 SRC_ROOT，
 #      并安装/合并 .dockerignore 与 .gitignore
@@ -166,7 +166,7 @@ TPL="$DEST/docker-compose.yml.tpl"
 [ -f "$TPL" ] || { err "包内缺少 docker-compose.yml.tpl: $TPL"; exit 1; }
 
 # compose 运行文件：复制模板到项目根目录，仅去掉 .tpl 后缀（不做任何渲染，
-# ${SRC_ROOT:-./} / ${SRC_ROOT_NAME:-app} 由 docker compose 运行时解析）
+# ${SRC_ROOT:-./src/} / ${SRC_ROOT_NAME:-app} 由 docker compose 运行时解析）
 step "复制 compose 模板"
 cp "$TPL" "$COMPOSE_FILE"
 ok "已创建 ${C_BOLD}$COMPOSE_FILE${C_RESET}"
@@ -181,6 +181,18 @@ for pair in "${COPY_ROOT_FILES[@]}"; do
 done
 # zip/tar 传输可能丢失可执行位，显式恢复
 chmod 755 "$SRC_ROOT/build.sh"
+
+# ---------- compose 命令检测：v2 插件优先，仅有 v1 独立版时改写 Makefile ----------
+COMPOSE_MODE="missing"
+if docker compose version >/dev/null 2>&1; then
+    COMPOSE_MODE="v2"
+elif command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE_MODE="v1"
+    sed 's|^COMPOSE := docker compose |COMPOSE := docker-compose |' \
+        "$SRC_ROOT/Makefile" > "$SRC_ROOT/Makefile.compose-tmp"
+    mv "$SRC_ROOT/Makefile.compose-tmp" "$SRC_ROOT/Makefile"
+    ok "未检测到 docker compose 插件，已将 Makefile 的 COMPOSE 改为 docker-compose"
+fi
 
 # .dockerignore / .gitignore：缺失时创建；已存在时仅追加缺失条目（不动原内容）
 merge_ignore_file() {  # $1 = 包内文件名（与根目录目标同名）
@@ -236,19 +248,18 @@ if [ "{{NODE_ENABLED}}" = "1" ]; then
 fi
 
 echo ""
-printf '%s\n' "${C_GREEN}${C_BOLD}======================== 安装完成 ========================${C_RESET}"
-echo "根目录操作文件: ${C_BOLD}$SRC_ROOT${C_RESET}"
-echo "原始副本:       $DEST"
-echo "compose 文件:   $COMPOSE_FILE"
-echo ""
-echo "${C_BOLD}后续步骤：${C_RESET}"
+printf '%s\n' "${C_GREEN}${C_BOLD}== 安装完成 ==${C_RESET}"
+echo "项目根目录: ${C_BOLD}$SRC_ROOT${C_RESET}"
 if [ "$LOAD_IMAGES" = "1" ]; then
-    note "1. （镜像已随 --load 自动导入，跳过 docker load）"
+    echo "镜像: 已导入（--load）"
 else
-    echo "  1. docker load -i devcontainer-docker-images_{{ARCH}}_{{TS}}.tgz    # 在 install.sh 所在目录执行，若尚未导入镜像"
+    echo "镜像: cd \"$SCRIPT_DIR\" && docker load -i devcontainer-docker-images_{{ARCH}}_{{TS}}.tgz"
 fi
-echo "  2. cd ${C_BOLD}\"$SRC_ROOT\"${C_RESET}                          # 所有 make / build.sh 命令都在项目根目录执行"
-echo "  3. ${C_GREEN}make check && make up && make logs${C_RESET}"
-echo "  （make shell / lint / compile / test 也在项目根目录执行；docs/devcontainer 下"
-echo "    是原始副本，改坏根目录文件时从那里复制回来重置即可）"
+echo "启动: cd \"$SRC_ROOT\" && ${C_GREEN}make check && make up && make logs${C_RESET}"
+echo "更多: make help（docs/devcontainer 为原始副本，可重置根目录文件）"
+if [ "$COMPOSE_MODE" = "v1" ]; then
+    note "已将 Makefile 的 COMPOSE 设为 docker-compose"
+elif [ "$COMPOSE_MODE" = "missing" ]; then
+    printf '%s\n' "${C_RED}${C_BOLD}警告: 未检测到 docker compose 或 docker-compose，make 命令无法执行，请先安装 docker compose。${C_RESET}"
+fi
 {{ORACLE_NOTICE_BLOCK}}{{NPM_NOTICE_BLOCK}}

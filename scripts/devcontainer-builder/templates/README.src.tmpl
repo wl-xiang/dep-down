@@ -68,8 +68,9 @@ make down         # 停止
 - `docker-compose.yml` 位于项目根目录，由 install.sh 从
   `docs/devcontainer/docker-compose.yml.tpl` 原样复制（仅去掉 `.tpl` 后缀，
   不做渲染）。模板中的两个环境变量由 docker compose 运行时解析（冒号杠
-  默认值语法）：`${SRC_ROOT:-./}` 应用根目录（默认 `./` = 项目根目录，挂载为
-  容器 `/app`）、`${SRC_ROOT_NAME:-app}` compose 项目名后缀。需要调整时可用
+  默认值语法）：`${SRC_ROOT:-./src/}` 应用根目录（默认 `./src/` = 项目根目录
+  下的 src 子目录，挂载为容器 `/app`）、`${SRC_ROOT_NAME:-app}` compose 项目名
+  后缀。需要调整时可用
   环境变量覆盖（如 `SRC_ROOT=/path/to/app docker compose up`），或直接改项目
   根目录的 `docker-compose.yml`（`.tpl` 保持原样，留作参考）。
 - app 服务的启动方式已显式写入 `docker-compose.yml`：`entrypoint: []`（清空
