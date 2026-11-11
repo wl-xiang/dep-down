@@ -211,6 +211,15 @@ jobs:
             echo "::error::src 包不应包含渲染后的 docker-compose.yaml（只保留 docker-compose.yml.tpl）"
             exit 1
           fi
+          # app 服务必须显式写入 entrypoint/command：清空镜像 ENTRYPOINT/CMD，
+          # 用户直接改 docker-compose.yml 即可调整启动方式（无需重建镜像）
+          tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/docker-compose.yml.tpl > /tmp/compose.start.tpl
+          grep -q '^    entrypoint: \[\]$' /tmp/compose.start.tpl \
+            || { echo "::error::compose 模板缺少显式 entrypoint: []（清空镜像 ENTRYPOINT）"; exit 1; }
+          grep -q '^    command: \[' /tmp/compose.start.tpl \
+            || { echo "::error::compose 模板缺少显式 command"; exit 1; }
+          grep -q 'my-start.sh' /tmp/compose.start.tpl \
+            || { echo "::error::compose 模板缺少自定义启动脚本示例"; exit 1; }
           grep -q 'devcontainer-src/main.py$' /tmp/src_tgz.list \
             || { echo "::error::src 包缺少占位 main.py"; exit 1; }
           # 项目根目录操作文件（install.sh 复制/改名到 src root）与忽略文件

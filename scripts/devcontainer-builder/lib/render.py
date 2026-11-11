@@ -412,11 +412,24 @@ def render_src_dockerfile(p, staging):
     )
 
 
-def _app_command_block(p):
-    """仅 dev 镜像模式下镜像 CMD 为 bash，app 服务需显式指定启动命令。"""
-    if not p.dev_image_only:
-        return ""
-    return f"    command: {p.prod_command_json}\n"
+def _app_start_block(p):
+    """app 服务的启动方式：显式覆盖镜像 ENTRYPOINT/CMD，便于直接改 compose。
+
+    镜像默认命令由 Dockerfile 的 CMD 承载；这里固定写入 entrypoint: []
+    （清空镜像 ENTRYPOINT）与 command（默认 prod_command），用户无需重建镜像
+    即可调整启动命令，或按注释换成自定义启动脚本。
+    """
+    return (
+        "    # ---- 启动方式：直接改下面两项即可，无需重建镜像 ----\n"
+        "    # 镜像自带的 ENTRYPOINT / CMD 已被显式覆盖：entrypoint 为空 = 清空镜像\n"
+        "    # ENTRYPOINT；command 承载默认启动命令（构建参数 prod_command）。\n"
+        "    # 需要自定义启动脚本时，在 app 已有 volumes 下追加脚本挂载并修改：\n"
+        "    #     - ./my-start.sh:/opt/my-start.sh:ro\n"
+        "    #   entrypoint: [\"/bin/bash\", \"/opt/my-start.sh\"]\n"
+        "    #   command: []   # 按需清空，避免镜像 CMD 被追加为脚本参数\n"
+        "    entrypoint: []\n"
+        f"    command: {p.prod_command_json}  # 使用自定义 entrypoint 时改为 []\n"
+    )
 
 
 def _app_options_block(p):
@@ -497,7 +510,7 @@ def render_compose(p):
         _load("compose.base.tmpl"),
         {
             **_base_mapping(p),
-            "APP_COMMAND_BLOCK": _app_command_block(p),
+            "APP_START_BLOCK": _app_start_block(p),
             "APP_OPTIONS_BLOCK": _app_options_block(p),
             "DEPENDS_ON_BLOCK": _depends_on_block(p),
             "DEV_SERVICE_BLOCK": dev_service,

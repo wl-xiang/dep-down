@@ -75,7 +75,7 @@ make up (python main.py)
 | `npm_packages_dir` | string | 相对/绝对路径 | `packages` | **Npm Download 产物所在目录**：把该工作流产出的 `packages/` 内容（`*.tgz` + `package.json`）放这里，compose 会把它只读挂载到容器 `/opt/npm-packages`，供 `make npm-install` 离线安装前端依赖。相对项目根或绝对路径（需 `enable_node=true`） |
 | `sidecars` | string | 逗号/空格分隔，如 `nginx postgres` | 空 | 启用的外挂服务：`nginx`（8080:80）、`postgres`（postgres:16，数据卷 pgdata） |
 | `app_depends_on` | string | 逗号/空格分隔，如 `nginx postgres` | 空 | app 服务 `depends_on` 的外挂服务（须在 `sidecars` 中同时启用） |
-| `prod_command` | string | 命令行 | `python main.py` | prod 服务启动命令 |
+| `prod_command` | string | 命令行 | `python main.py` | prod 服务启动命令（同时写入镜像 CMD 与 compose 的 app 服务 `command`，安装后可直接改 compose 免重建） |
 | `image_mode` | choice | `prod+dev` / `prod-only` / `dev-only` | `prod+dev` | `prod+dev`：同时构建 prod 与 dev 镜像；`prod-only`：只构建 prod；`dev-only`：只构建 dev 镜像并用于部署（镜像归档只含该镜像） |
 | `image_prefix` | string | 小写字母/数字/`._-` | `mydevc1` | 镜像名前缀：prod 镜像为 `<prefix>:<tag>`，dev 镜像为 `<prefix>-dev:<tag>`；仅 dev 镜像模式只有 `<prefix>-dev:<tag>`。Artifact 名也使用该前缀（`<prefix>_devcontainer_<时间戳>`） |
 | `image_tag` | choice | `latest` / `timestamp` | `latest` | 镜像 TAG：`latest`（每次构建覆盖同名镜像）或 `timestamp`（构建时间戳，UTC+8，如 `20260101-120000`） |
@@ -519,13 +519,18 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
   `PYTHONDONTWRITEBYTECODE=1`）；Node.js 只复制 node/npm 并删除 npm 自带文档；
   Oracle `full` 模式的 `wget`/`unzip` 只用于构建期下载，安装、解压与
   `apt-get purge --auto-remove` 在同一层完成，不残留在运行时镜像中。
-- 镜像使用 `CMD`（而非 `ENTRYPOINT`）承载默认命令：`make up` 时 compose 的
-  `command` 直接覆盖 CMD 执行 `python main.py`；`make shell` 通过 dev 镜像的
-  `CMD ["bash"]` 进入交互终端，两者互不干扰。
+- 启动方式显式写入 compose：`docker-compose.yml` 的 app 服务固定写入
+  `entrypoint: []`（清空镜像 ENTRYPOINT）与 `command`（默认构建参数
+  `prod_command`），直接改这两行即可调整启动命令，无需重建镜像。要用自定义
+  启动脚本时，按 compose 文件内注释在 app 的 `volumes` 下追加脚本挂载并把
+  `entrypoint` 改为 `["/bin/bash", "/opt/my-start.sh"]`、`command` 清空为
+  `[]`（否则镜像 CMD 会被追加为脚本参数）。镜像本身仍用 `CMD` 承载默认命令，
+  `docker compose run --rm app <命令>` 不受影响；`make shell` 通过 dev 镜像的
+  `CMD ["bash"]` 进入交互终端，互不干扰。
 - `image_mode=dev-only` 时不再生成两个镜像：Dockerfile 只有单阶段 `dev`，
-  compose 的 app 服务直接引用该 dev 镜像并显式写入 `command`（镜像 CMD 为
-  bash），`make up` 与 `make shell/lint/test` 共用同一个镜像；镜像归档中也
-  只保存这一个镜像。
+  compose 的 app 服务直接引用该 dev 镜像，启动命令同样由 compose 的
+  `command` 显式承载（镜像 CMD 为 bash），`make up` 与
+  `make shell/lint/test` 共用同一个镜像；镜像归档中也只保存这一个镜像。
 - `wheels/` 仅在构建时经 BuildKit bind mount 参与安装，不复制进任何镜像层
   （构建上下文中的 `wheels/` 不会进入发布包，运行容器内也没有 wheels）；
   内网补装新包走 `build.sh`（见「离线补装 Python 包」）。
@@ -582,7 +587,8 @@ docs/devcontainer/ 内）。
 **Q: `make up` 后容器一直重启（Restarting）？**
 `python: can't open file '/app/main.py'` 类错误说明启动命令指向的入口不存在：
 确认项目根目录（或 `app_source_dir` 指定的子目录）下有对应入口文件，或修改
-项目根目录 `docker-compose.yml` 中的 `command`。注意镜像 TAG 必须与本次导入
+项目根目录 `docker-compose.yml` 中 app 服务的 `entrypoint` / `command`
+（启动方式已显式写入，无需重建镜像）。注意镜像 TAG 必须与本次导入
 的镜像归档一致（先 `make check` 自检）。
 
 **Q: 挂载目录里出现 root 属主文件 / 宿主机无法修改？**

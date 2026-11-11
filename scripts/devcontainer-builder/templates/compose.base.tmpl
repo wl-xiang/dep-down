@@ -9,6 +9,8 @@
 #                         -> Npm Download 产物目录（启用 Node 时）
 # 离线使用：镜像已由 devcontainer-docker-images_{{TS}}.tgz 导入，
 # pull_policy=never + make up --no-build 不会触发任何联网。
+# app 服务的 entrypoint / command 已显式写入（覆盖镜像 ENTRYPOINT / CMD），
+# 调整启动方式直接改 app 服务内这两项即可，无需重建镜像。
 name: {{IMAGE_PREFIX}}-${SRC_ROOT_NAME:-app}
 services:
   app:
@@ -27,7 +29,7 @@ services:
       - {{APP_VOLUME}}
 {{EXTRA_VOLUMES}}    networks:
       - app-net
-{{APP_COMMAND_BLOCK}}{{APP_OPTIONS_BLOCK}}{{DEPENDS_ON_BLOCK}}{{DEV_SERVICE_BLOCK}}{{SERVICE_BLOCKS}}
+{{APP_START_BLOCK}}{{APP_OPTIONS_BLOCK}}{{DEPENDS_ON_BLOCK}}{{DEV_SERVICE_BLOCK}}{{SERVICE_BLOCKS}}
 networks:
   app-net: {}
 {{VOLUMES_BLOCK}}
