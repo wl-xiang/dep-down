@@ -1,6 +1,6 @@
-# Offline Package Downloader
+# Offline DevKit
 
-跨平台的 Python 和 npm 离线包下载工具，并可在外网构建可直接带进内网运行的 Python 开发环境镜像（DevContainer），用于为内网系统准备依赖包与运行环境。
+跨平台的离线依赖与开发环境工具箱：在外网为内网/隔离网络下载 Python 与 npm 依赖包，并构建可直接带进内网运行的 Python 开发环境镜像（DevContainer）。
 
 ## 通过 GitHub Action 自动下载并打包
 
