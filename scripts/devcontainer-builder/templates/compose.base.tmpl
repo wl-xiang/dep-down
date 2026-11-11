@@ -3,7 +3,7 @@
 # 本模板由 install.sh 原样复制到项目根目录为 docker-compose.yml（去掉 .tpl 后缀）。
 # 模板内环境变量由 docker compose 在运行时解析（冒号杠默认值语法），
 # 可用环境变量覆盖：
-#   ${SRC_ROOT:-./}       -> 应用根目录，默认 ./ = docker-compose.yml 所在的项目根目录
+#   ${SRC_ROOT:-./src/}   -> 应用根目录，默认 ./src/ = docker-compose.yml 所在项目根目录下的 src 子目录
 #   ${SRC_ROOT_NAME:-app} -> compose 项目名后缀，默认 app
 {{ORACLE_COMPOSE_HINT}}#   ${NPM_PACKAGES_DIR:-./packages}
 #                         -> Npm Download 产物目录（启用 Node 时）

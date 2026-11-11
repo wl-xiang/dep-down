@@ -114,8 +114,10 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   离线安装头（`--no-index --find-links=./`，pip 按该文件所在目录解析相对
   find-links）；缺少 main.py 且 prod_command 为默认值时放置占位入口。
   Makefile/build.sh 的全部路径按**执行时 pwd** 解析，原始副本与根目录文件
-  可互换。模板内 `${SRC_ROOT:-./}`（默认 `./` = 项目根目录，挂载为 /app）与
+  可互换。模板内 `${SRC_ROOT:-./src/}`（默认 `./src/`，挂载为 /app）与
   `${SRC_ROOT_NAME:-app}`（compose 项目名后缀）由 docker compose 运行时解析。
+  install.sh 会检测 compose 命令：仅有 `docker-compose`（v1）时把 Makefile 的
+  `COMPOSE` 改为 `docker-compose`；两者都没有时保持默认并输出红色警告。
 - **离线补装（build.sh + Dockerfile.addon→根目录 Dockerfile）**：wheel 放
   项目根 `wheels/`，项目根执行 `bash build.sh` 基于现有镜像逐个
   `docker build --target` 生成 addon 新镜像（prod `<前缀>:<后缀>` / dev

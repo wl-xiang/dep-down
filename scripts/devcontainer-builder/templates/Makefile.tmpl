@@ -2,7 +2,7 @@
 # 平台: {{DOCKER_PLATFORM}} | 镜像 TAG: {{TAG}}（时间戳: {{TS}}）
 # 本文件由 install.sh 安装到项目根目录（src root），所有 make 命令都在
 # 项目根目录执行；docker-compose.yml 也在项目根目录（install.sh 复制生成），
-# 挂载默认 ${SRC_ROOT:-./} 即项目根目录（可用环境变量 SRC_ROOT 覆盖）。
+# 挂载默认 ${SRC_ROOT:-./src/}（可用环境变量 SRC_ROOT 覆盖）。
 # docs/devcontainer/ 下是本文件的原始副本，仅用于把改坏的根目录文件
 # 复制回去重置——不要在 docs/devcontainer 下直接运行任何脚本。
 

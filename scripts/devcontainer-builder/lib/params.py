@@ -358,16 +358,16 @@ class Params:
 
     @property
     def mount_path(self):
-        """容器 /app 的挂载源。${SRC_ROOT:-./} 由 docker compose 在运行时解析
-        （默认 ./ = docker-compose.yml 所在的项目根目录）；app_source_dir 为
-        根目录下的相对子目录（或绝对路径）。
+        """容器 /app 的挂载源。${SRC_ROOT:-./src/} 由 docker compose 在运行时解析
+        （默认 ./src/ = docker-compose.yml 所在项目根目录下的 src 子目录）；
+        app_source_dir 为相对 SRC_ROOT 的子目录（或绝对路径）。
         SELinux Enforcing 主机可追加 :z 重打标签。"""
         if self.app_source_dir == ".":
-            src = "${SRC_ROOT:-./}"
+            src = "${SRC_ROOT:-./src/}"
         elif self.app_source_dir.startswith("/"):
             src = self.app_source_dir.rstrip("/") or "/"
         else:
-            src = "${SRC_ROOT:-./}/" + self.app_source_dir.strip("/")
+            src = "${SRC_ROOT:-./src/}/" + self.app_source_dir.strip("/")
         return f"{src}:/app{':z' if self.selinux_relabel else ''}"
 
     @property
