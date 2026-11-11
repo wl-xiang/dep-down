@@ -66,7 +66,7 @@ scripts/devcontainer-builder/
 | `PROD_COMMAND` | `python main.py` | prod 服务命令 |
 | `BUILD_DEV_IMAGE` | `true` | 是否构建 dev 镜像 |
 | `DEV_IMAGE_ONLY` | `false` | 仅构建 dev 镜像：不再区分 prod/dev，部署也用 dev 镜像，镜像归档只含该镜像（优先于 `BUILD_DEV_IMAGE`） |
-| `IMAGE_PREFIX` | `mydevc1` | 镜像名前缀（prod `<prefix>:<tag>` / dev `<prefix>-dev:<tag>`；Artifact 名为 `<prefix>_devcontainer_<ts>`） |
+| `IMAGE_PREFIX` | `mydevc1` | 镜像名前缀（prod `<prefix>:<tag>` / dev `<prefix>-dev:<tag>`；Artifact 名为 `<prefix>_devcontainer_<arch>_<ts>`） |
 | `IMAGE_TAG` | `latest` | 镜像 TAG：`latest`（默认）或 `timestamp`（构建时间戳，UTC+8） |
 | `APP_SOURCE_DIR` | `.` | 挂载为 /app 的源码目录（不支持 `~`） |
 | `APP_PORT` | `3000:3000` | 端口映射 `host:container`（单端口等价同端口）；启用 nginx 时只暴露容器端口 |
@@ -125,7 +125,7 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   查找 .dockerignore，故不受根目录排除 wheels/ 影响；build.sh 还会显式清理
   上下文内任何 dockerignore 双保险），构建后自动清理。wheels/requirements.txt 含真实包名才
   按清单装，否则装目录下全部 `*.whl`（空清单不会静默 no-op）。回滚 = 重新
-  docker load 原 `devcontainer-docker-images_<时间戳>.tgz`。workflow 的
+  docker load 原 `devcontainer-docker-images_<架构>_<时间戳>.tgz`。workflow 的
   Verify 步骤含 mock docker 干跑回归测试，持续断言补装上下文不受
   .dockerignore 影响。
 - **预装组件（勾选项）**：`enable_lucide` → 追加 pip 包 `lucide`（纯 Python
@@ -173,10 +173,11 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   `devcontainer:latest` / `devcontainer-dev:latest`；`IMAGE_TAG=timestamp` 时为
   `devcontainer:20260101-120000` / `devcontainer-dev:20260101-120000`）。TAG
   由 `IMAGE_TAG` 选择 `latest`（默认）或构建时间戳（UTC+8）。产物文件名
-  （bundle zip / 镜像归档 tgz / src tgz）统一使用 UTC+8 时间戳。
-- **唯一 Artifact**：`<镜像前缀>_devcontainer_<时间戳>` 一个 zip 内含
-  `devcontainer-docker-images_<时间戳>.tgz`（docker save 直出 gzip，docker
-  load 用）、`devcontainer-src_<时间戳>.tgz`、`install.sh` 与 `readme.html`
+  （bundle zip / 镜像归档 tgz / src tgz）统一使用 `<架构>_<UTC+8 时间戳>`，
+  架构取 `amd64` / `arm64`（由 `platform` 推导，不带 `linux-` 前缀）。
+- **唯一 Artifact**：`<镜像前缀>_devcontainer_<架构>_<时间戳>` 一个 zip 内含
+  `devcontainer-docker-images_<架构>_<时间戳>.tgz`（docker save 直出 gzip，docker
+  load 用）、`devcontainer-src_<架构>_<时间戳>.tgz`、`install.sh` 与 `readme.html`
   四个文件；"Bundle" 专指该外部 zip，镜像归档文件名用 "Docker Images"。
   安装方式：zip 放项目根 `dist/` 解压后 `bash install.sh ../`（加 `--load`
   可在安装开始前自动 docker load 同目录的镜像归档 tgz）。

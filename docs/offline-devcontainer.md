@@ -44,10 +44,11 @@ make up (python main.py)
 1. 进入 Fork 后的仓库，点击 **Actions** → 左侧选择 **Build DevContainer** →
    **Run workflow**。
 2. 填写参数后运行。运行完成后在 **Summary** 底部 **Artifacts** 下载唯一产物
-   `<image_prefix>_devcontainer_<时间戳>.zip`（时间戳为 UTC+8），zip 解压得到四个文件：
-   - `devcontainer-docker-images_<时间戳>.tgz`：Docker Images 镜像归档
+   `<image_prefix>_devcontainer_<架构>_<时间戳>.zip`（架构为 `amd64` / `arm64`，
+   时间戳为 UTC+8），zip 解压得到四个文件：
+   - `devcontainer-docker-images_<架构>_<时间戳>.tgz`：Docker Images 镜像归档
      （gzip 压缩的 `docker save` 输出，可直接 `docker load`）
-   - `devcontainer-src_<时间戳>.tgz`：运行时源码包
+   - `devcontainer-src_<架构>_<时间戳>.tgz`：运行时源码包
    - `install.sh`：安装脚本（与 src tgz 放同一目录使用）
    - `readme.html`：简易安装说明（把 zip 放到项目根目录 `dist/` 解压后
      `bash install.sh ../`；加 `--load` 可在安装开始前自动 `docker load`
@@ -77,7 +78,7 @@ make up (python main.py)
 | `app_depends_on` | string | 逗号/空格分隔，如 `nginx postgres` | 空 | app 服务 `depends_on` 的外挂服务（须在 `sidecars` 中同时启用） |
 | `prod_command` | string | 命令行 | `python main.py` | prod 服务启动命令（同时写入镜像 CMD 与 compose 的 app 服务 `command`，安装后可直接改 compose 免重建） |
 | `image_mode` | choice | `prod+dev` / `prod-only` / `dev-only` | `prod+dev` | `prod+dev`：同时构建 prod 与 dev 镜像；`prod-only`：只构建 prod；`dev-only`：只构建 dev 镜像并用于部署（镜像归档只含该镜像） |
-| `image_prefix` | string | 小写字母/数字/`._-` | `mydevc1` | 镜像名前缀：prod 镜像为 `<prefix>:<tag>`，dev 镜像为 `<prefix>-dev:<tag>`；仅 dev 镜像模式只有 `<prefix>-dev:<tag>`。Artifact 名也使用该前缀（`<prefix>_devcontainer_<时间戳>`） |
+| `image_prefix` | string | 小写字母/数字/`._-` | `mydevc1` | 镜像名前缀：prod 镜像为 `<prefix>:<tag>`，dev 镜像为 `<prefix>-dev:<tag>`；仅 dev 镜像模式只有 `<prefix>-dev:<tag>`。Artifact 名也使用该前缀（`<prefix>_devcontainer_<架构>_<时间戳>`，架构为 `amd64` / `arm64`） |
 | `image_tag` | choice | `latest` / `timestamp` | `latest` | 镜像 TAG：`latest`（每次构建覆盖同名镜像）或 `timestamp`（构建时间戳，UTC+8，如 `20260101-120000`） |
 | `app_source_dir` | string | 相对/绝对路径 | `.` | 挂载进容器 `/app` 的目录：`.` = 整个项目根目录；相对路径 = 项目根目录下的子目录（如 monorepo 中的应用子目录，可避免 ruff/pytest 扫到无关源码）；也支持绝对路径。项目根目录由 `install.sh` 安装时传入（不支持 `~`） |
 | `app_port` | string | `host:container` 或单个端口号 | `3000:3000` | 应用端口映射：写成 `3000:3000` 表示宿主机 3000 → 容器 3000；只写 `3000` 等价于 `3000:3000`；空 = 不映射。启用 nginx 时 app 仅容器网络暴露容器端口，由 nginx 反代 |
@@ -108,24 +109,25 @@ make up (python main.py)
 
 ## 产物说明
 
-唯一 Artifact 为 `<image_prefix>_devcontainer_<yyyymmdd-HHMMSS>.zip`（时间戳 UTC+8），
+唯一 Artifact 为 `<image_prefix>_devcontainer_<架构>_<yyyymmdd-HHMMSS>.zip`
+（架构为 `amd64` / `arm64`，时间戳 UTC+8），
 zip 内含以下四个文件（`compression-level: 0`，仅存储不再二次压缩）：
 
 | 文件 | 用途 |
 |------|------|
-| `devcontainer-docker-images_<时间戳>.tgz` | Docker Images 镜像归档（`docker load` 用） |
-| `devcontainer-src_<时间戳>.tgz` | 运行时源码包 |
+| `devcontainer-docker-images_<架构>_<时间戳>.tgz` | Docker Images 镜像归档（`docker load` 用） |
+| `devcontainer-src_<架构>_<时间戳>.tgz` | 运行时源码包 |
 | `install.sh` | 安装脚本（与 src tgz 放同一目录） |
 | `readme.html` | 简易安装说明（建议把 zip 放到项目根目录 `dist/` 下解压后 `bash install.sh ../`；`--load` 可自动导入镜像） |
 
-### devcontainer-docker-images_<yyyymmdd-HHMMSS>.tgz
+### devcontainer-docker-images_<架构>_<yyyymmdd-HHMMSS>.tgz
 
 该文件是 `docker save` 输出经 gzip 压缩得到的镜像归档（prod、dev、nginx、postgres，
 按本次参数），可直接 `docker load -i` 导入，无需再解一层 tar。`image_mode=dev-only`
 时归档中只有一个 dev 镜像（外加按需启用的 nginx/postgres）。Summary 中同时给出
 SHA256，便于校验传输完整性。
 
-### devcontainer-src_<yyyymmdd-HHMMSS>.tgz
+### devcontainer-src_<架构>_<yyyymmdd-HHMMSS>.tgz
 
 解压后得到顶层目录 `devcontainer-src/`（正常使用无需手动解压，由 `install.sh`
 完成）：
@@ -202,14 +204,14 @@ bash install.sh --load ../       # 加 --load：安装开始前自动 docker loa
 ## 内网使用步骤
 
 ```bash
-# 1. 下载唯一 Artifact <image_prefix>_devcontainer_<时间戳>.zip，
+# 1. 下载唯一 Artifact <image_prefix>_devcontainer_<架构>_<时间戳>.zip，
 #    放到你的项目根目录 dist/ 文件夹下（没有就新建），并在 dist/ 中解压：
 
 # 2. 导入镜像 + 安装到项目根目录（均在 dist/ 中执行，参数 ../ 即项目根目录）
 #    --load 会在安装开始前自动 docker load 同目录的镜像归档（一步到位）
 bash install.sh --load ../
 #    （等价的两步写法：
-#      docker load -i devcontainer-docker-images_20260101-120000.tgz
+#      docker load -i devcontainer-docker-images_amd64_20260101-120000.tgz
 #      bash install.sh ../）
 
 # 3. 离线自检：镜像是否已导入、CPU 架构是否匹配（在项目根目录执行）
@@ -271,7 +273,7 @@ make up && make logs
   mock docker 干跑回归测试断言这一点。构建结束临时目录自动清理。请勿在
   项目根目录直接 `docker build .`——那会把整个项目作为上下文，且 `wheels/`
   已被 .dockerignore 排除导致 COPY 失败。
-- 回滚：重新 `docker load -i devcontainer-docker-images_<时间戳>.tgz` 即可
+- 回滚：重新 `docker load -i devcontainer-docker-images_<架构>_<时间戳>.tgz` 即可
   恢复原镜像。
 
 ## Makefile 目标
@@ -550,7 +552,7 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
 ## FAQ
 
 **Q: 为什么内网 `make up` 报错找不到镜像 / 尝试联网构建？**
-先执行 `docker load -i devcontainer-docker-images_<时间戳>.tgz` 导入镜像，再在
+先执行 `docker load -i devcontainer-docker-images_<架构>_<时间戳>.tgz` 导入镜像，再在
 `docs/devcontainer` 原始副本所在的项目根目录执行 `make check` 确认所有镜像存在；`make up` 使用
 `--no-build`，compose 中也设置了 `pull_policy: never`，不会联网。若仍失败，
 说明镜像 TAG 与 compose 中不一致，请确认使用同一次构建的镜像归档与 src。
@@ -561,7 +563,7 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
 
 **Q: 传输后 `docker load` 报 `unexpected EOF` / 校验不符？**
 镜像归档通常几百 MB 到 1 GB+，传输中断很常见。对比 Summary 中的 SHA256：
-`sha256sum devcontainer-docker-images_<时间戳>.tgz`，不一致就重新传输。
+`sha256sum devcontainer-docker-images_<架构>_<时间戳>.tgz`，不一致就重新传输。
 
 **Q: `docker load` 磁盘空间不足？**
 导入过程需要约 2 倍镜像体积的临时空间（`docker info` 查看 Docker Root Dir 所在分区）。

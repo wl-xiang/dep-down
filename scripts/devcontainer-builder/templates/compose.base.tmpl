@@ -7,7 +7,7 @@
 #   ${SRC_ROOT_NAME:-app} -> compose 项目名后缀，默认 app
 {{ORACLE_COMPOSE_HINT}}#   ${NPM_PACKAGES_DIR:-./packages}
 #                         -> Npm Download 产物目录（启用 Node 时）
-# 离线使用：镜像已由 devcontainer-docker-images_{{TS}}.tgz 导入，
+# 离线使用：镜像已由 devcontainer-docker-images_{{ARCH}}_{{TS}}.tgz 导入，
 # pull_policy=never + make up --no-build 不会触发任何联网。
 # app 服务的 entrypoint / command 已显式写入（覆盖镜像 ENTRYPOINT / CMD），
 # 调整启动方式直接改 app 服务内这两项即可，无需重建镜像。

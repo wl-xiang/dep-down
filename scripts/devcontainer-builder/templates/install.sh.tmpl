@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 由 scripts/devcontainer-builder 生成（时间戳: {{TS}}，镜像 TAG: {{TAG}}），请勿手工编辑。
 #
-# 用法：把本脚本与 devcontainer-src_{{TS}}.tgz 放在同一目录（建议放在项目
+# 用法：把本脚本与 devcontainer-src_{{ARCH}}_{{TS}}.tgz 放在同一目录（建议放在项目
 # 根目录的 dist/ 下），然后执行：
 #   bash install.sh /path/to/your/project-root     # 在 dist/ 中即 bash install.sh ../
 #   bash install.sh --load /path/to/your/project-root
@@ -11,7 +11,7 @@
 # （Artifact 的 zip 解压后可能丢失可执行权限，统一用 `bash install.sh` 调用）
 #
 # 作用：
-#   1. 在 <SRC_ROOT>/docs/devcontainer 下解压 devcontainer-src_{{TS}}.tgz
+#   1. 在 <SRC_ROOT>/docs/devcontainer 下解压 devcontainer-src_{{ARCH}}_{{TS}}.tgz
 #      （原始副本目录，仅用于把改坏的根目录文件复制回去重置）
 #   2. 把包内 docker-compose.yml.tpl 原样复制到 SRC_ROOT，命名为去掉 .tpl
 #      后缀的 docker-compose.yml（模板内 ${SRC_ROOT:-./} 与
@@ -245,7 +245,7 @@ echo "${C_BOLD}后续步骤：${C_RESET}"
 if [ "$LOAD_IMAGES" = "1" ]; then
     note "1. （镜像已随 --load 自动导入，跳过 docker load）"
 else
-    echo "  1. docker load -i devcontainer-docker-images_{{TS}}.tgz    # 在 install.sh 所在目录执行，若尚未导入镜像"
+    echo "  1. docker load -i devcontainer-docker-images_{{ARCH}}_{{TS}}.tgz    # 在 install.sh 所在目录执行，若尚未导入镜像"
 fi
 echo "  2. cd ${C_BOLD}\"$SRC_ROOT\"${C_RESET}                          # 所有 make / build.sh 命令都在项目根目录执行"
 echo "  3. ${C_GREEN}make check && make up && make logs${C_RESET}"

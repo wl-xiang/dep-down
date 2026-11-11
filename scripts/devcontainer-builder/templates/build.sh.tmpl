@@ -17,7 +17,7 @@
 #      拷回内网机器项目根目录 wheels/ 下；
 #   2. 在项目根目录执行 bash build.sh；
 #   3. 按输出的 sed 命令把项目根目录的 docker-compose.yml 切换到新镜像，
-#      make up 生效。回滚：重新 docker load 原 devcontainer-docker-images_{{TS}}.tgz 即可恢复原镜像。
+#      make up 生效。回滚：重新 docker load 原 devcontainer-docker-images_{{ARCH}}_{{TS}}.tgz 即可恢复原镜像。
 # （Artifact 的 zip 解压后可能丢失可执行权限，统一用 `bash build.sh` 调用）
 set -euo pipefail
 
@@ -62,4 +62,4 @@ build() {  # $1=Dockerfile target, $2=原镜像, $3=新镜像 TAG
 
 echo ""
 echo "完成。执行上面输出的 sed 命令切换项目根目录的 docker-compose.yml 后，make up 即使用新镜像。"
-echo "（回滚：重新 docker load 原始 devcontainer-docker-images_{{TS}}.tgz）"
+echo "（回滚：重新 docker load 原始 devcontainer-docker-images_{{ARCH}}_{{TS}}.tgz）"

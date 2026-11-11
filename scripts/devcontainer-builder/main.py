@@ -8,12 +8,12 @@
        .dockerignore / .gitignore
     3. lib/pip.py 复用 pip_download 逻辑下载 wheels/
     4. lib/docker.py buildx 构建 prod(/dev)、拉取外挂镜像、docker save 直出 gzip
-    5. lib/package.py 打包 devcontainer-src_<ts>.tgz；镜像归档
-       devcontainer-docker-images_<ts>.tgz 已在上一步直出；
+    5. lib/package.py 打包 devcontainer-src_<arch>_<ts>.tgz；镜像归档
+       devcontainer-docker-images_<arch>_<ts>.tgz 已在上一步直出；
        install.sh 与 readme.html 写入 dist/
     6. lib/summary.py 写 GITHUB_STEP_SUMMARY / GITHUB_OUTPUT，
-       上传唯一 Artifact：<image_prefix>_devcontainer_<ts>（zip，内含镜像归档 tgz、
-       src tgz、install.sh 与 readme.html 四个文件）
+       上传唯一 Artifact：<image_prefix>_devcontainer_<arch>_<ts>（zip，内含镜像归档
+       tgz、src tgz、install.sh 与 readme.html 四个文件）
 
 本地联调可设置 DEVCONTAINER_SKIP_DOCKER=1 跳过 docker 步骤。
 """
@@ -94,7 +94,10 @@ def main():
                 docker_mod.build_image(p, staging, "dev", p.dev_image)
         docker_mod.pull_service_images(p)
         images = docker_mod.image_list(p)
-        images_tgz = REPO_ROOT / "dist" / f"devcontainer-docker-images_{p.ts}.tgz"
+        images_tgz = (
+            REPO_ROOT / "dist"
+            / f"devcontainer-docker-images_{p.arch_label}_{p.ts}.tgz"
+        )
         print("== docker save (gzip) ==")
         docker_mod.save_images(images, images_tgz)
 
@@ -110,7 +113,7 @@ def main():
     (staging / ".dockerignore").write_text(
         render_mod.render_dockerignore(p), encoding="utf-8"
     )
-    src_tgz = REPO_ROOT / "dist" / f"devcontainer-src_{p.ts}.tgz"
+    src_tgz = REPO_ROOT / "dist" / f"devcontainer-src_{p.arch_label}_{p.ts}.tgz"
     package_mod.make_src_tgz(staging, src_tgz)
     print(f"== src 产物: {src_tgz} "
           f"({package_mod.human_size(src_tgz.stat().st_size)}) ==")

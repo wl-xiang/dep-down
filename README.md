@@ -59,10 +59,10 @@ pip install -r requirements.txt
 
 1. Fork 本仓库，进入 **Actions** → **Build DevContainer** → **Run workflow**。
 2. 填写参数（完整参数表见 [docs/offline-devcontainer.md](docs/offline-devcontainer.md)）。
-3. 运行完成后，在 **Summary** 底部下载唯一产物 `<镜像前缀>_devcontainer_<时间戳>.zip`
-   （时间戳为 UTC+8），解压得到四个文件：
-   - `devcontainer-docker-images_<时间戳>.tgz`：Docker Images 镜像归档（gzip 压缩的 `docker save` 归档，可直接 `docker load`）
-   - `devcontainer-src_<时间戳>.tgz`：运行时源码包（包含 Dockerfile、compose 模板、Makefile、requirements.txt 等）
+3. 运行完成后，在 **Summary** 底部下载唯一产物 `<镜像前缀>_devcontainer_<架构>_<时间戳>.zip`
+   （架构为 `amd64` / `arm64`，时间戳为 UTC+8），解压得到四个文件：
+   - `devcontainer-docker-images_<架构>_<时间戳>.tgz`：Docker Images 镜像归档（gzip 压缩的 `docker save` 归档，可直接 `docker load`）
+   - `devcontainer-src_<架构>_<时间戳>.tgz`：运行时源码包（包含 Dockerfile、compose 模板、Makefile、requirements.txt 等）
    - `install.sh`：安装脚本（与 src tgz 放同一目录）
    - `readme.html`：图文安装说明
    > Artifacts 下载得到的是 zip 封装（已设为不压缩，仅存储），解压即得上述文件。
@@ -72,7 +72,7 @@ pip install -r requirements.txt
 
 ```bash
 # 唯一产物解压后，四个文件放到同一目录：
-docker load -i devcontainer-docker-images_<ts>.tgz    # 镜像归档可直接导入
+docker load -i devcontainer-docker-images_<arch>_<ts>.tgz   # 镜像归档可直接导入
 bash install.sh ~/apps/myapp1                         # 安装到应用根目录 docs/devcontainer/（compose 文件复制到项目根）
 cd ~/apps/myapp1                                     # 所有 make 命令都在项目根目录执行
 make check      # 离线自检镜像/架构

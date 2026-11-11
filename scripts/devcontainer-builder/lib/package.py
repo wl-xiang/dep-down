@@ -1,4 +1,4 @@
-"""src tgz 产物的打包（镜像归档 devcontainer-docker-images_<ts>.tgz 由 lib/docker.py 直出 gzip）。"""
+"""src tgz 产物的打包（镜像归档 devcontainer-docker-images_<arch>_<ts>.tgz 由 lib/docker.py 直出 gzip）。"""
 
 import tarfile
 from pathlib import Path

@@ -1,7 +1,7 @@
 # 离线 Python 开发环境（devcontainer）
 
 本包由 GitHub Action `build-devcontainer` 生成、经 `install.sh` 安装到你的项目，
-需配合镜像归档 `devcontainer-docker-images_{{TS}}.tgz` 在内网离线使用。
+需配合镜像归档 `devcontainer-docker-images_{{ARCH}}_{{TS}}.tgz` 在内网离线使用。
 **所有 make / build.sh 命令都在项目根目录（src root）执行**。
 
 安装后的目录布局：
@@ -40,7 +40,7 @@ CPU 架构与上表平台一致。
 #    --load 会在安装开始前自动 docker load 同目录的镜像归档（一步到位）
 bash install.sh --load ../
 #    （等价的两步写法：
-#      cd dist && docker load -i devcontainer-docker-images_{{TS}}.tgz
+#      cd dist && docker load -i devcontainer-docker-images_{{ARCH}}_{{TS}}.tgz
 #      bash install.sh ../
 #     tgz 是 gzip 压缩的 docker save 归档，可直接 load）
 
@@ -103,7 +103,7 @@ make down         # 停止
   （离线安装头已由 install.sh 预置，`--find-links=./` 自动指向 wheels/
   所在目录；此方式装进容器可写层，重建容器后失效，持久生效仍需 build.sh）。
 - `make build` 需要联网（apt/pip 源），离线机器请勿使用；镜像请统一通过
-  `devcontainer-docker-images_{{TS}}.tgz` 导入。
+  `devcontainer-docker-images_{{ARCH}}_{{TS}}.tgz` 导入。
 - `make check` 可离线自检镜像是否已导入、架构是否匹配。
 - `make help` 查看全部可用目标。
 {{DEV_TOOLS_NOTE}}
@@ -136,4 +136,4 @@ make up && make logs
   整个项目目录发给 docker daemon，也不受根目录 `.dockerignore`（排除
   wheels/）影响——docker 只按上下文根目录查找 `.dockerignore`，且 build.sh
   会显式清理上下文内的任何 dockerignore 双保险；构建结束自动清理。
-- 回滚：重新 `docker load -i devcontainer-docker-images_{{TS}}.tgz` 即可恢复原镜像。
+- 回滚：重新 `docker load -i devcontainer-docker-images_{{ARCH}}_{{TS}}.tgz` 即可恢复原镜像。
