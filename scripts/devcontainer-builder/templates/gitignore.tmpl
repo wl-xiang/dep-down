@@ -10,3 +10,12 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 node_modules/
+
+# 所有压缩包与 sync 产物（sync.py / flush.py）
+*.tgz
+*.tar.gz
+*.zip
+sync.json
+
+# 本地密钥配置（由 .env.example 复制而来，含 SSH 密码请勿提交）
+.env
