@@ -249,6 +249,10 @@ jobs:
             bash -n "${{ steps.build.outputs.install_sh }}"
             grep -q -- '--load' "${{ steps.build.outputs.install_sh }}" \
               || { echo "::error::install.sh 缺少 --load 选项"; exit 1; }
+            grep -q -- '-d|--default' "${{ steps.build.outputs.install_sh }}" \
+              || { echo "::error::install.sh 缺少 -d/--default 选项"; exit 1; }
+            grep -q 'SRC_ROOT="../src/"' "${{ steps.build.outputs.install_sh }}" \
+              || { echo "::error::install.sh 的 -d/--default 未使用默认路径 ../src/"; exit 1; }
             sha256sum "${{ steps.build.outputs.install_sh }}"
           else
             echo "::error::install.sh 未生成"
