@@ -7,6 +7,8 @@
 #   bash install.sh --load /path/to/your/project-root
 #                                                  # 安装开始前自动 docker load
 #                                                  # 同目录的镜像归档 tgz
+#   bash install.sh -d | --default                 # 一键默认安装：自动启用 --load，
+#                                                  # 无需传路径，固定解压到 ../src/
 #   bash install.sh -h | --help                    # 查看用法、选项与退出码
 # （Artifact 的 zip 解压后可能丢失可执行权限，统一用 `bash install.sh` 调用）
 #
@@ -43,6 +45,7 @@ usage() {
     local code=${1:-2}
     cat <<EOF
 ${C_BOLD}用法:${C_RESET} bash $0 [--load] <SRC_ROOT>
+       bash $0 -d | --default
 
 在项目根目录安装离线 devcontainer 开发环境：解压源码/模板包，安装 Makefile、
 build.sh、Dockerfile、docker-compose.yml 以及 .dockerignore / .gitignore。
@@ -52,6 +55,9 @@ ${C_BOLD}参数:${C_RESET}
                         原始副本与模板安装到 <SRC_ROOT>/docs/devcontainer。
 
 ${C_BOLD}选项:${C_RESET}
+  -d, --default         默认安装：自动启用 --load，且无需指定 SRC_ROOT，
+                        固定使用 ../src/。该选项为顶级覆盖：忽略同时给出的
+                        SRC_ROOT 及其它相关自定义设置。
   --load                安装开始前自动在脚本所在目录查找
                         devcontainer-docker-images_*.tgz 并执行 docker load
                         （等效于手动 docker load -i 该归档）。
@@ -60,6 +66,7 @@ ${C_BOLD}选项:${C_RESET}
 ${C_BOLD}示例:${C_RESET}
   bash install.sh ../              # 在项目根目录的 dist/ 中安装到上一级项目根
   bash install.sh --load ../       # 同上，并在安装前自动导入镜像
+  bash install.sh -d               # 一键默认：自动导入镜像并安装到 ../src/
   bash install.sh -h               # 查看本帮助
 
 ${C_BOLD}退出码:${C_RESET}
@@ -75,17 +82,29 @@ EOF
 }
 
 LOAD_IMAGES=0
+DEFAULT_MODE=0
 while [ "$#" -gt 0 ]; do
     case "$1" in
         -h|--help) usage 0 ;;
+        -d|--default) DEFAULT_MODE=1; shift ;;
         --load)    LOAD_IMAGES=1; shift ;;
         --)        shift; break ;;
         -*)        err "未知选项: $1"; usage ;;
         *)         break ;;
     esac
 done
-[ "$#" -eq 1 ] || usage
-SRC_ROOT=$1
+if [ "$DEFAULT_MODE" = "1" ]; then
+    # -d/--default 为顶级覆盖：强制自动导入镜像，并固定使用默认解压路径
+    # ../src/（与 CWD 相对，等价于 --load ../src/），忽略用户给出的路径与相关选项。
+    LOAD_IMAGES=1
+    if [ "$#" -gt 0 ]; then
+        note "-d/--default 已忽略自定义路径: $*（固定使用 ../src/）"
+    fi
+    SRC_ROOT="../src/"
+else
+    [ "$#" -eq 1 ] || usage
+    SRC_ROOT=$1
+fi
 [ -d "$SRC_ROOT" ] || { err "SRC_ROOT 不是目录: $SRC_ROOT"; exit 1; }
 SRC_ROOT=$(cd "$SRC_ROOT" && pwd -P)
 
@@ -251,7 +270,11 @@ echo ""
 printf '%s\n' "${C_GREEN}${C_BOLD}== 安装完成 ==${C_RESET}"
 echo "项目根目录: ${C_BOLD}$SRC_ROOT${C_RESET}"
 if [ "$LOAD_IMAGES" = "1" ]; then
-    echo "镜像: 已导入（--load）"
+    if [ "$DEFAULT_MODE" = "1" ]; then
+        echo "镜像: 已导入（-d/--default）"
+    else
+        echo "镜像: 已导入（--load）"
+    fi
 else
     echo "镜像: cd \"$SCRIPT_DIR\" && docker load -i devcontainer-docker-images_{{ARCH}}_{{TS}}.tgz"
 fi
