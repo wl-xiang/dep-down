@@ -10,14 +10,16 @@
     4. lib/docker.py buildx 构建 prod(/dev)、拉取外挂镜像、docker save 直出 gzip
     5. lib/package.py 打包 devcontainer-src_<arch>_<ts>.tgz；镜像归档
        devcontainer-docker-images_<arch>_<ts>.tgz 已在上一步直出；
-       install.sh 与 readme.html 写入 dist/
+       install.sh、readme.html 与 workflow-params.json（本次 workflow 输入
+       参数快照，由 lib/params.py 的 workflow_inputs_snapshot 生成）写入 dist/
     6. lib/summary.py 写 GITHUB_STEP_SUMMARY / GITHUB_OUTPUT，
        上传唯一 Artifact：<image_prefix>_devcontainer_<arch>_<ts>（zip，内含镜像归档
-       tgz、src tgz、install.sh 与 readme.html 四个文件）
+       tgz、src tgz、install.sh、readme.html 与 workflow-params.json 五个文件）
 
 本地联调可设置 DEVCONTAINER_SKIP_DOCKER=1 跳过 docker 步骤。
 """
 
+import json
 import os
 import shutil
 import sys
@@ -128,6 +130,16 @@ def main():
     )
     print(f"== 安装说明: {readme_html} ==")
 
+    # workflow 输入参数快照：与 install.sh / readme.html 同级（zip 顶层），
+    # 仅随 Artifact 分发；install.sh 不会把它安装进项目
+    workflow_params_json = REPO_ROOT / "dist" / "workflow-params.json"
+    workflow_params_json.write_text(
+        json.dumps(params_mod.workflow_inputs_snapshot(),
+                   ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    print(f"== workflow 参数快照: {workflow_params_json} ==")
+
     if images_tgz is not None:
         print(f"== 镜像归档产物: {images_tgz} "
               f"({package_mod.human_size(images_tgz.stat().st_size)}) ==")
@@ -138,6 +150,7 @@ def main():
         "images_tgz": images_tgz,
         "install_sh": install_sh,
         "readme_html": readme_html,
+        "workflow_params_json": workflow_params_json,
         "images": images,
         "wheels_count": wheels_count,
         "skipped_docker": skip_docker,

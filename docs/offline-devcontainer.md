@@ -47,7 +47,7 @@ make up (python main.py)
    **Run workflow**。
 2. 填写参数后运行。运行完成后在 **Summary** 底部 **Artifacts** 下载唯一产物
    `<image_prefix>_devcontainer_<架构>_<时间戳>.zip`（架构为 `amd64` / `arm64`，
-   时间戳为 UTC+8），zip 解压得到四个文件：
+   时间戳为 UTC+8），zip 解压得到五个文件：
    - `devcontainer-docker-images_<架构>_<时间戳>.tgz`：Docker Images 镜像归档
      （gzip 压缩的 `docker save` 输出，可直接 `docker load`）
    - `devcontainer-src_<架构>_<时间戳>.tgz`：运行时源码包
@@ -55,6 +55,7 @@ make up (python main.py)
    - `readme.html`：简易安装说明（把 zip 放到项目根目录 `dist/` 解压后
      `bash install.sh ../`；加 `--load` 可在安装开始前自动 `docker load`
      镜像归档）
+   - `workflow-params.json`：本次运行的 workflow 输入参数快照（详见下文）
 
    > Artifacts 只能是 zip 封装，工作流已设置 `compression-level: 0`（仅存储、
    > 不再二次压缩），解压 zip 即得到产物文件。"Bundle" 专指这个外部 zip 产物；
@@ -113,7 +114,7 @@ make up (python main.py)
 
 唯一 Artifact 为 `<image_prefix>_devcontainer_<架构>_<yyyymmdd-HHMMSS>.zip`
 （架构为 `amd64` / `arm64`，时间戳 UTC+8），
-zip 内含以下四个文件（`compression-level: 0`，仅存储不再二次压缩）：
+zip 内含以下五个文件（`compression-level: 0`，仅存储不再二次压缩）：
 
 | 文件 | 用途 |
 |------|------|
@@ -121,6 +122,22 @@ zip 内含以下四个文件（`compression-level: 0`，仅存储不再二次压
 | `devcontainer-src_<架构>_<时间戳>.tgz` | 运行时源码包 |
 | `install.sh` | 安装脚本（与 src tgz 放同一目录） |
 | `readme.html` | 简易安装说明（建议把 zip 放到项目根目录 `dist/` 下解压后 `bash install.sh ../`；`--load` 可自动导入镜像） |
+| `workflow-params.json` | 本次运行的 workflow 输入参数快照（仅供追溯，`install.sh` 不安装它） |
+
+#### workflow-params.json
+
+记录本次运行在 GitHub 前端输入的原始参数值，顶层分三个 section（键顺序与
+workflow inputs 定义顺序一致）：
+
+- `full`（全量版）：记录全部 21 个输入——留空字符串记 `""`，未勾选的
+  checkbox 记 `false`；
+- `normal`（正常版）：省略留空字符串与默认值（未勾选）checkbox；
+- `minimal`（精简版）：再省略取默认值的参数（含 choice），只保留用户实际
+  改动过的输入。
+
+值为前端提交的原始字符串（checkbox 解析为布尔，其余不做规范化，如
+`app_port` 只写 `3000` 时原样记录）。该文件仅用于追溯本次构建的输入，
+`install.sh` 不会把它安装进项目。
 
 ### devcontainer-docker-images_<架构>_<yyyymmdd-HHMMSS>.tgz
 

@@ -193,6 +193,11 @@ jobs:
           APP_PORT: ${{ inputs.app_port }}
           ENV_FILE: ${{ inputs.env_file }}
           SELINUX_RELABEL: ${{ inputs.selinux_relabel }}
+          # 原始输入透传（供 workflow-params.json 快照记录；上方 ENABLE_NGINX 等
+          # 为 contains/等值 派生布尔，不含原始值）
+          SIDECARS: ${{ inputs.sidecars }}
+          APP_DEPENDS_ON: ${{ inputs.app_depends_on }}
+          IMAGE_MODE: ${{ inputs.image_mode }}
         run: python scripts/devcontainer-builder/main.py
 
       - name: Verify artifacts
@@ -275,6 +280,66 @@ jobs:
             echo "::error::readme.html 未生成"
             exit 1
           fi
+          echo "--- workflow-params.json (workflow 输入参数快照) ---"
+          test -s "${{ steps.build.outputs.workflow_params_json }}" \
+            || { echo "::error::workflow-params.json 未生成"; exit 1; }
+          python - "${{ steps.build.outputs.workflow_params_json }}" <<'PY'
+          import json, sys
+
+          # workflow inputs 默认值（与 build-devcontainer.yml 的 inputs 保持同步）
+          DEFAULTS = {
+              "platform": ("linux-amd64", "choice"),
+              "python_version": ("3.13", "choice"),
+              "pip_packages": ("", "string"),
+              "apt_packages": ("", "string"),
+              "custom_install_cmd": ("", "string"),
+              "enable_lucide": ("false", "boolean"),
+              "enable_oracle_instantclient": ("none", "choice"),
+              "preset_envs": ("", "string"),
+              "enable_node": ("false", "boolean"),
+              "npm_packages": ("", "string"),
+              "npm_packages_dir": ("packages", "string"),
+              "sidecars": ("", "string"),
+              "app_depends_on": ("", "string"),
+              "prod_command": ("python main.py", "string"),
+              "image_mode": ("prod-only", "choice"),
+              "image_prefix": ("mydevc1", "string"),
+              "image_tag": ("latest", "choice"),
+              "app_source_dir": (".", "string"),
+              "app_port": ("3000:3000", "string"),
+              "env_file": ("", "string"),
+              "selinux_relabel": ("false", "boolean"),
+          }
+          data = json.load(open(sys.argv[1], encoding="utf-8"))
+          assert list(data) == ["minimal", "normal", "full"], list(data)
+          full = data["full"]
+          assert list(full) == list(DEFAULTS), list(full)
+          for name, (_default, kind) in DEFAULTS.items():
+              value = full[name]
+              if kind == "boolean":
+                  assert isinstance(value, bool), (name, value)
+              else:
+                  assert isinstance(value, str), (name, value)
+          # normal/minimal：不允许留空字符串与 false；键集合逐层收窄
+          for section in ("normal", "minimal"):
+              for name, value in data[section].items():
+                  assert value not in ("", False), (section, name, value)
+          assert set(data["minimal"]) <= set(data["normal"]) <= set(full)
+          # minimal：不允许出现取默认值的参数
+          for name, value in data["minimal"].items():
+              default, kind = DEFAULTS[name]
+              default_value = (default.lower() == "true") if kind == "boolean" else default
+              assert value != default_value, (name, value, default)
+          print("workflow-params.json OK "
+                f"(minimal={len(data['minimal'])}, normal={len(data['normal'])}, "
+                f"full={len(full)})")
+          PY
+          # install.sh 只按固定清单安装文件，不应引用 workflow-params.json
+          if grep -q 'workflow-params' "${{ steps.build.outputs.install_sh }}"; then
+            echo "::error::install.sh 不应引用 workflow-params.json（该文件不参与安装）"
+            exit 1
+          fi
+          sha256sum "${{ steps.build.outputs.workflow_params_json }}"
           echo "--- build.sh (from src tgz) ---"
           tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/build.sh > /tmp/build.sh
           bash -n /tmp/build.sh
@@ -408,8 +473,9 @@ jobs:
       # Artifacts 只能是 zip 封装：设 compression-level 0 让 zip 只做存储，
       # 避免 tgz 再被 zip 二次压缩。唯一产物
       # <image_prefix>_devcontainer_<架构>_<时间戳>（架构 amd64/arm64），
-      # zip 内含镜像归档 tgz、src tgz、install.sh 与 readme.html 四个文件
-      - name: Upload bundle artifact (docker images tgz + src tgz + install.sh + readme.html)
+      # zip 内含镜像归档 tgz、src tgz、install.sh、readme.html 与
+      # workflow-params.json 五个文件
+      - name: Upload bundle artifact (docker images tgz + src tgz + install.sh + readme.html + workflow-params.json)
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.build.outputs.bundle_name }}
@@ -418,5 +484,6 @@ jobs:
             ${{ steps.build.outputs.src_tgz }}
             ${{ steps.build.outputs.install_sh }}
             ${{ steps.build.outputs.readme_html }}
+            ${{ steps.build.outputs.workflow_params_json }}
           compression-level: 0
           if-no-files-found: error

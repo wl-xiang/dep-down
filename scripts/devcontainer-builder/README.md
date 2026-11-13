@@ -179,8 +179,8 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   架构取 `amd64` / `arm64`（由 `platform` 推导，不带 `linux-` 前缀）。
 - **唯一 Artifact**：`<镜像前缀>_devcontainer_<架构>_<时间戳>` 一个 zip 内含
   `devcontainer-docker-images_<架构>_<时间戳>.tgz`（docker save 直出 gzip，docker
-  load 用）、`devcontainer-src_<架构>_<时间戳>.tgz`、`install.sh` 与 `readme.html`
-  四个文件；"Bundle" 专指该外部 zip，镜像归档文件名用 "Docker Images"。
+  load 用）、`devcontainer-src_<架构>_<时间戳>.tgz`、`install.sh`、`readme.html`
+  与 `workflow-params.json` 五个文件；"Bundle" 专指该外部 zip，镜像归档文件名用 "Docker Images"。
   安装方式：zip 放项目根 `dist/` 解压后 `bash install.sh ../`（加 `--load`
   可在安装开始前自动 docker load 同目录的镜像归档 tgz）。
 - **镜像瘦身**：基础镜像 slim-bookworm；apt 安装后同层 `apt-get clean` 并清理
