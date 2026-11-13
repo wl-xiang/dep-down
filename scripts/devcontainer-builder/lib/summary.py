@@ -28,6 +28,7 @@ def build_markdown(p, results):
     images_tgz = results.get("images_tgz")
     install_sh = results.get("install_sh")
     readme_html = results.get("readme_html")
+    workflow_params_json = results.get("workflow_params_json")
     skipped_docker = results.get("skipped_docker", False)
     bundle_name = p.bundle_name
 
@@ -135,7 +136,7 @@ def build_markdown(p, results):
     out.append("### 产物清单")
     out.append("")
     out.append(f"唯一 Artifact：**{bundle_name}**（zip 封装、仅存储不压缩，"
-               "解压即得以下四个文件）")
+               "解压即得以下五个文件）")
     out.append("")
     out.append("| 文件 | 大小 | SHA256 |")
     out.append("| --- | --- | --- |")
@@ -159,13 +160,21 @@ def build_markdown(p, results):
         out.append(
             f"| {readme_html.name}（安装说明） | {human_size(readme_html.stat().st_size)} | (HTML) |"
         )
+    if workflow_params_json:
+        out.append(
+            f"| {workflow_params_json.name}（workflow 输入参数快照，"
+            "install.sh 不安装它） "
+            f"| {human_size(workflow_params_json.stat().st_size)} "
+            f"| `{sha256_of(workflow_params_json)}` |"
+        )
     out.append("")
 
     out.append("### 内网使用步骤")
     out.append("")
     out.append("1. 从本次运行页面底部 **Artifacts** 下载唯一产物"
                f" **{bundle_name}**（zip 仅为封装、不压缩，解压得到"
-               " 镜像归档 tgz、src tgz、install.sh 与 readme.html 四个文件），"
+               " 镜像归档 tgz、src tgz、install.sh、readme.html 与"
+               " workflow-params.json 五个文件），"
                "传输到与目标平台一致的内网机器，并用上表 SHA256 校验完整性。")
     out.append("")
     out.append("2. **把 artifact zip 包放到你的项目根目录 `dist/` 文件夹下**"
@@ -330,6 +339,10 @@ def emit(p, results):
         readme_html = results.get("readme_html")
         if readme_html:
             entries.append(("readme_html", str(readme_html)))
+        workflow_params_json = results.get("workflow_params_json")
+        if workflow_params_json:
+            entries.append(("workflow_params_json", str(workflow_params_json)))
+            entries.append(("workflow_params_name", workflow_params_json.name))
         entries.append(("images", ",".join(results.get("images") or [])))
         with open(output_path, "a", encoding="utf-8") as f:
             for key, value in entries:

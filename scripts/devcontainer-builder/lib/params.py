@@ -545,3 +545,69 @@ def validate(p):
     if len(p.app_source_dir) > 1 and p.app_source_dir != "/":
         p.app_source_dir = p.app_source_dir.rstrip("/") or "."
     return p
+
+
+# ---------------------------------------------------------------------------
+# Workflow 输入参数快照（workflow-params.json）
+#
+# 与 .github/workflows/build-devcontainer.yml 的 workflow_dispatch inputs
+# 一一对应：(输入名, 环境变量, 类型, workflow 默认值)。新增/修改 workflow
+# 输入时必须同步本表（含默认值），否则快照过滤会失真。sidecars /
+# app_depends_on / image_mode 在 build 步骤以原始值透传（ENABLE_NGINX 等
+# 派生布尔不含原始值，不在此列）。
+# ---------------------------------------------------------------------------
+WORKFLOW_INPUTS = (
+    ("platform", "PLATFORM", "choice", "linux-amd64"),
+    ("python_version", "PYTHON_VERSION", "choice", "3.13"),
+    ("pip_packages", "PIP_PACKAGES", "string", ""),
+    ("apt_packages", "APT_PACKAGES", "string", ""),
+    ("custom_install_cmd", "CUSTOM_INSTALL_CMD", "string", ""),
+    ("enable_lucide", "ENABLE_LUCIDE", "boolean", "false"),
+    ("enable_oracle_instantclient", "ENABLE_ORACLE_INSTANTCLIENT", "choice", "none"),
+    ("preset_envs", "PRESET_ENVS", "string", ""),
+    ("enable_node", "ENABLE_NODE", "boolean", "false"),
+    ("npm_packages", "NPM_PACKAGES", "string", ""),
+    ("npm_packages_dir", "NPM_PACKAGES_DIR", "string", "packages"),
+    ("sidecars", "SIDECARS", "string", ""),
+    ("app_depends_on", "APP_DEPENDS_ON", "string", ""),
+    ("prod_command", "PROD_COMMAND", "string", "python main.py"),
+    ("image_mode", "IMAGE_MODE", "choice", "prod-only"),
+    ("image_prefix", "IMAGE_PREFIX", "string", "mydevc1"),
+    ("image_tag", "IMAGE_TAG", "choice", "latest"),
+    ("app_source_dir", "APP_SOURCE_DIR", "string", "."),
+    ("app_port", "APP_PORT", "string", "3000:3000"),
+    ("env_file", "ENV_FILE", "string", ""),
+    ("selinux_relabel", "SELINUX_RELABEL", "boolean", "false"),
+)
+
+
+def workflow_inputs_snapshot():
+    """读取原始 workflow 输入，生成 minimal/normal/full 三层参数快照。
+
+    值为 GitHub 前端提交的原始字符串（checkbox 解析为布尔，其余不做规范化）；
+    本地联调未设置的环境变量视为未提供（字符串记 ""、checkbox 记 false）。
+    键顺序与 workflow inputs 定义顺序一致。
+
+    - full：记录全部输入（留空字符串记 ""、未勾选 checkbox 记 false）
+    - normal：省略留空字符串与默认值 checkbox
+    - minimal：再省略取默认值的参数（含 choice），只保留用户实际改动过的输入
+    """
+    full = {}
+    for name, env, kind, _default in WORKFLOW_INPUTS:
+        raw = (os.environ.get(env) or "").strip()
+        full[name] = raw.lower() in BOOL_TRUE if kind == "boolean" else raw
+
+    normal = {}
+    minimal = {}
+    for name, _env, kind, default in WORKFLOW_INPUTS:
+        value = full[name]
+        default_value = (default.lower() in BOOL_TRUE if kind == "boolean"
+                         else default)
+        if kind == "boolean":
+            if value != default_value:  # 默认值（未勾选）checkbox 不记录
+                normal[name] = value
+        elif value != "":  # 留空字符串不记录
+            normal[name] = value
+        if value != default_value and value != "":
+            minimal[name] = value
+    return {"minimal": minimal, "normal": normal, "full": full}
